@@ -29,7 +29,7 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
-    connect_args={"options": f"-csearch_path={CDO_SCHEMA},public"}
+    pool_recycle=300
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -644,9 +644,10 @@ class ShopifyAuth(Base):
 
 def init_db():
     """Create all tables."""
+    from sqlalchemy import text
     # Create schema first
     with engine.connect() as conn:
-        conn.execute(f"CREATE SCHEMA IF NOT EXISTS {CDO_SCHEMA}")
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {CDO_SCHEMA}"))
         conn.commit()
 
     # Create tables
