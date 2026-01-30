@@ -35,6 +35,18 @@ class Settings(BaseSettings):
 
     # OpenAI for product recommendations and tech pack generation
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    dall_e_model: str = os.getenv("DALL_E_MODEL", "dall-e-3")
+
+    # Microsoft OneDrive for file storage (patterns, sketches, tech packs)
+    onedrive_client_id: str = os.getenv("ONEDRIVE_CLIENT_ID", "")
+    onedrive_client_secret: str = os.getenv("ONEDRIVE_CLIENT_SECRET", "")
+    onedrive_tenant_id: str = os.getenv("ONEDRIVE_TENANT_ID", "")
+    onedrive_user_id: str = os.getenv("ONEDRIVE_USER_ID", "")
+    onedrive_folder_path: str = os.getenv("ONEDRIVE_FOLDER_PATH", "Dearborn AI/CDO")
+
+    # Scheduler
+    discovery_cron: str = os.getenv("DISCOVERY_CRON", "0 6 * * 1")
 
     # App settings
     debug: bool = os.getenv("DEBUG", "false").lower() == "true"

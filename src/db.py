@@ -85,6 +85,44 @@ class AlertSeverity(str, PyEnum):
     CRITICAL = "critical"
 
 
+class OpportunityStatus(str, PyEnum):
+    DISCOVERED = "discovered"
+    SCORED = "scored"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+
+
+class ConceptStatus(str, PyEnum):
+    DRAFT = "draft"
+    SKETCH_GENERATED = "sketch_generated"
+    BRIEF_COMPLETE = "brief_complete"
+    VALIDATING = "validating"
+    VALIDATED = "validated"
+    VALIDATION_FAILED = "validation_failed"
+    SUBMITTED_FOR_APPROVAL = "submitted_for_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ValidationStatus(str, PyEnum):
+    PENDING = "pending"
+    SENT = "sent"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    TIMED_OUT = "timed_out"
+
+
+class PipelinePhase(str, PyEnum):
+    DISCOVERY = "discovery"
+    CONCEPT = "concept"
+    VALIDATION = "validation"
+    APPROVAL = "approval"
+    TECHNICAL_DESIGN = "technical_design"
+    HANDOFF = "handoff"
+    COMPLETE = "complete"
+    CANCELLED = "cancelled"
+
+
 # ============== Analytics Models ==============
 
 class SalesSnapshot(Base):
@@ -578,6 +616,223 @@ class ReportSchedule(Base):
     is_active = Column(Boolean, default=True)
     last_run = Column(DateTime)
     next_run = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+# ============== Product Pipeline Models ==============
+
+class DiscoveryScan(Base):
+    """Audit trail for discovery scan runs."""
+    __tablename__ = "discovery_scans"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    scan_type = Column(String(50), nullable=False)  # weekly_auto, manual, targeted
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+
+    # Results
+    trends_found = Column(Integer, default=0)
+    competitors_scanned = Column(Integer, default=0)
+    opportunities_generated = Column(Integer, default=0)
+
+    # Config used
+    scan_config = Column(JSON)
+    error_log = Column(JSON)
+
+    status = Column(String(20), default="running")  # running, completed, failed
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class CompetitorProduct(Base):
+    """Competitor product data from scraping."""
+    __tablename__ = "competitor_products"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    competitor = Column(String(100), nullable=False, index=True)
+    product_name = Column(String(255), nullable=False)
+    product_url = Column(String(500))
+    category = Column(String(100), index=True)
+
+    price = Column(Float)
+    original_price = Column(Float)
+    description = Column(Text)
+    materials = Column(Text)
+    features = Column(JSON)
+    image_urls = Column(JSON)
+
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    price_history = Column(JSON)  # [{date, price}, ...]
+
+    __table_args__ = (
+        UniqueConstraint('competitor', 'product_url', name='uq_competitor_product_url'),
+        {'schema': CDO_SCHEMA}
+    )
+
+
+class ProductOpportunity(Base):
+    """Discovery phase output - scored opportunities."""
+    __tablename__ = "product_opportunities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    discovery_scan_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.discovery_scans.id'))
+
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    category = Column(String(100), index=True)
+
+    # Scoring
+    trend_score = Column(Float, default=0)  # 0-100
+    market_score = Column(Float, default=0)  # 0-100
+    feasibility_score = Column(Float, default=0)  # 0-100
+    composite_score = Column(Float, default=0)  # weighted average
+
+    # Supporting data
+    trend_keywords = Column(JSON)
+    competitor_refs = Column(JSON)  # [{competitor, product_name, price}, ...]
+    market_data = Column(JSON)
+    ai_analysis = Column(Text)
+
+    # Pricing estimates
+    estimated_retail = Column(Float)
+    estimated_cost = Column(Float)
+    estimated_margin = Column(Float)
+
+    status = Column(Enum(OpportunityStatus), default=OpportunityStatus.DISCOVERED)
+    rejected_reason = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class ProductConcept(Base):
+    """Concept brief - developed from an opportunity."""
+    __tablename__ = "product_concepts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    opportunity_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_opportunities.id'))
+
+    concept_number = Column(String(50), unique=True, index=True)
+    title = Column(String(255), nullable=False)
+    category = Column(String(100))
+
+    # Concept brief (AI-generated)
+    brief = Column(Text)
+    target_customer = Column(Text)
+    key_features = Column(JSON)
+    differentiators = Column(JSON)
+    inspiration_references = Column(JSON)
+
+    # AI sketch
+    sketch_url = Column(String(500))
+    sketch_onedrive_id = Column(String(255))
+    sketch_share_link = Column(String(500))
+    sketch_prompt = Column(Text)
+
+    # Pricing
+    target_retail = Column(Float)
+    target_cost = Column(Float)
+    target_margin = Column(Float)
+    pricing_rationale = Column(Text)
+
+    # Validation status
+    cfo_validation = Column(Enum(ValidationStatus), default=ValidationStatus.PENDING)
+    coo_validation = Column(Enum(ValidationStatus), default=ValidationStatus.PENDING)
+    ceo_approval = Column(Enum(ValidationStatus), default=ValidationStatus.PENDING)
+
+    # CEO decision
+    ceo_decision_notes = Column(Text)
+    approved_date = Column(DateTime)
+
+    status = Column(Enum(ConceptStatus), default=ConceptStatus.DRAFT)
+
+    # Links
+    tech_pack_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.tech_packs.id'))
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class ValidationRequest(Base):
+    """Tracks margin/capacity check requests to CFO/COO."""
+    __tablename__ = "validation_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    concept_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_concepts.id'), nullable=False)
+
+    validation_type = Column(String(50), nullable=False)  # margin_check, capacity_check
+    target_module = Column(String(20), nullable=False)  # cfo, coo
+
+    # Request
+    request_payload = Column(JSON)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    event_id = Column(String(100))
+
+    # Response
+    response_payload = Column(JSON)
+    responded_at = Column(DateTime)
+
+    status = Column(Enum(ValidationStatus), default=ValidationStatus.PENDING)
+    result_summary = Column(Text)
+
+    # Timeout (48 hours default)
+    timeout_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class ProductPipeline(Base):
+    """Full lifecycle tracking through 6 phases."""
+    __tablename__ = "product_pipeline"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pipeline_number = Column(String(50), unique=True, index=True)
+
+    # Links
+    opportunity_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_opportunities.id'))
+    concept_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_concepts.id'))
+    tech_pack_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.tech_packs.id'))
+
+    title = Column(String(255), nullable=False)
+    category = Column(String(100))
+
+    # Current phase
+    current_phase = Column(Enum(PipelinePhase), default=PipelinePhase.DISCOVERY)
+
+    # Phase timestamps
+    discovery_started = Column(DateTime)
+    concept_started = Column(DateTime)
+    validation_started = Column(DateTime)
+    approval_started = Column(DateTime)
+    technical_design_started = Column(DateTime)
+    handoff_started = Column(DateTime)
+    completed_at = Column(DateTime)
+
+    # Handoff data
+    handoff_to_coo = Column(Boolean, default=False)
+    handoff_to_cmo = Column(Boolean, default=False)
+    handoff_to_cfo = Column(Boolean, default=False)
+
+    # Files
+    pattern_onedrive_id = Column(String(255))
+    pattern_share_link = Column(String(500))
+    techpack_onedrive_id = Column(String(255))
+    techpack_share_link = Column(String(500))
+
+    # Notes
+    phase_notes = Column(JSON)  # {phase: "notes", ...}
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
