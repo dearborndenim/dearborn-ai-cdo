@@ -14,6 +14,7 @@ from .db import init_db
 from .event_bus import event_bus
 from .routes import health, dashboard, tech_packs, patterns, product_ideas
 from .routes import trends, analytics, reports, shopify, events, alerts
+from .routes import discovery, pipeline
 
 settings = get_settings()
 logging.basicConfig(level=getattr(logging, settings.log_level))
@@ -75,6 +76,8 @@ app.include_router(reports.router)
 app.include_router(shopify.router)
 app.include_router(events.router)
 app.include_router(alerts.router)
+app.include_router(discovery.router)
+app.include_router(pipeline.router)
 
 
 if __name__ == "__main__":
