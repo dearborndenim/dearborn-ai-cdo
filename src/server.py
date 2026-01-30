@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_db
 from .event_bus import event_bus
+from .cdo.scheduler import start_scheduler, stop_scheduler
 from .routes import health, dashboard, tech_packs, patterns, product_ideas
 from .routes import trends, analytics, reports, shopify, events, alerts
 from .routes import discovery, pipeline
@@ -32,10 +33,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
 
+    # Start scheduler for automated jobs
+    try:
+        start_scheduler()
+        logger.info("Scheduler started (weekly discovery scan + validation timeout checker)")
+    except Exception as e:
+        logger.error(f"Scheduler startup failed: {e}")
+
     logger.info("CDO Module startup complete")
     yield
 
     logger.info("Shutting down CDO Module...")
+    stop_scheduler()
     event_bus.disconnect()
 
 
