@@ -27,6 +27,13 @@ class CDOOutboundEvent(str, Enum):
     TECH_PACK_READY = "tech_pack_ready"
     PATTERN_READY = "pattern_ready"
     DEMAND_FORECAST = "demand_forecast"
+    MARGIN_CHECK_REQUEST = "margin_check_request"
+    CAPACITY_CHECK_REQUEST = "capacity_check_request"
+    PRODUCT_APPROVAL_REQUEST = "product_approval_request"
+    PRODUCT_APPROVED_FOR_PRODUCTION = "product_approved_for_production"
+    PRODUCT_BUDGET_ALLOCATED = "product_budget_allocated"
+    PRODUCT_LAUNCH_SCHEDULED = "product_launch_scheduled"
+    PRODUCT_PIPELINE_UPDATED = "product_pipeline_updated"
 
 
 class CDOInboundEvent(str, Enum):
@@ -36,6 +43,8 @@ class CDOInboundEvent(str, Enum):
     INVENTORY_UPDATED = "inventory_updated"
     CAMPAIGN_PERFORMANCE = "campaign_performance"
     FINANCIAL_REPORT = "financial_report"
+    MARGIN_CHECK_RESPONSE = "margin_check_response"
+    CAPACITY_CHECK_RESPONSE = "capacity_check_response"
 
 
 class EventBus:
@@ -128,7 +137,17 @@ class EventBus:
                 if response.status_code == 200:
                     print(f"Published event {event_type} to CEO via HTTP fallback")
 
-            # COO fallback (demand forecast)
+            # CFO fallback
+            if target_module == "cfo" and settings.cfo_api_url:
+                response = httpx.post(
+                    f"{settings.cfo_api_url}/cfo/events/webhook",
+                    json=event,
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    print(f"Published event {event_type} to CFO via HTTP webhook")
+
+            # COO fallback
             if target_module == "coo" and settings.coo_api_url:
                 response = httpx.post(
                     f"{settings.coo_api_url}/coo/events/webhook",
@@ -188,6 +207,10 @@ class EventBus:
                 self._handle_inventory_updated(payload)
             elif event_type == CDOInboundEvent.CAMPAIGN_PERFORMANCE.value:
                 self._handle_campaign_performance(payload)
+            elif event_type == CDOInboundEvent.MARGIN_CHECK_RESPONSE.value:
+                self._handle_margin_check_response(payload)
+            elif event_type == CDOInboundEvent.CAPACITY_CHECK_RESPONSE.value:
+                self._handle_capacity_check_response(payload)
             else:
                 print(f"Unknown event type: {event_type}")
         except Exception as e:
@@ -227,7 +250,76 @@ class EventBus:
     def _handle_campaign_performance(self, payload: Dict[str, Any]):
         """Handle campaign performance from CMO."""
         print(f"Campaign performance: {payload}")
-        # TODO: Integrate into product analytics
+
+    def _handle_margin_check_response(self, payload: Dict[str, Any]):
+        """Handle margin check response from CFO."""
+        validation_request_id = payload.get("validation_request_id")
+        approved = payload.get("approved", False)
+        summary = payload.get("summary", "")
+
+        if not validation_request_id:
+            print("Margin check response missing validation_request_id")
+            return
+
+        db = SessionLocal()
+        try:
+            from .cdo.validation import ValidationOrchestrator
+            orchestrator = ValidationOrchestrator(db)
+            result = orchestrator.handle_validation_response(
+                validation_request_id=validation_request_id,
+                approved=approved,
+                response_data=payload,
+                summary=summary or f"CFO margin check: {'approved' if approved else 'rejected'}",
+            )
+            print(f"Margin check response processed: {result}")
+
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO if approved else AlertSeverity.WARNING,
+                category="validation",
+                title=f"Margin Check {'Approved' if approved else 'Rejected'}",
+                message=summary or f"CFO has {'approved' if approved else 'rejected'} the margin check"
+            )
+            db.add(alert)
+            db.commit()
+        except Exception as e:
+            print(f"Error processing margin check response: {e}")
+        finally:
+            db.close()
+
+    def _handle_capacity_check_response(self, payload: Dict[str, Any]):
+        """Handle capacity check response from COO."""
+        validation_request_id = payload.get("validation_request_id")
+        approved = payload.get("approved", False)
+        summary = payload.get("summary", "")
+
+        if not validation_request_id:
+            print("Capacity check response missing validation_request_id")
+            return
+
+        db = SessionLocal()
+        try:
+            from .cdo.validation import ValidationOrchestrator
+            orchestrator = ValidationOrchestrator(db)
+            result = orchestrator.handle_validation_response(
+                validation_request_id=validation_request_id,
+                approved=approved,
+                response_data=payload,
+                summary=summary or f"COO capacity check: {'approved' if approved else 'rejected'}",
+            )
+            print(f"Capacity check response processed: {result}")
+
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO if approved else AlertSeverity.WARNING,
+                category="validation",
+                title=f"Capacity Check {'Approved' if approved else 'Rejected'}",
+                message=summary or f"COO has {'approved' if approved else 'rejected'} the capacity check"
+            )
+            db.add(alert)
+            db.commit()
+        except Exception as e:
+            print(f"Error processing capacity check response: {e}")
+        finally:
+            db.close()
 
     def disconnect(self):
         """Disconnect from Redis."""
