@@ -227,7 +227,7 @@ class DraftPatternGenerator:
             dxfattribs={"layer": "LABELS"}
         ).set_placement((0, min(p[1] for piece in block["pieces"].values() for p in piece.get("points", [(0, 0)])) - 6))
 
-        # Write to bytes
-        stream = io.BytesIO()
+        # Write to bytes (ezdxf writes text-based DXF)
+        stream = io.StringIO()
         doc.write(stream)
-        return stream.getvalue()
+        return stream.getvalue().encode("utf-8")
