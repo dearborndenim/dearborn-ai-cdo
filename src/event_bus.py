@@ -7,6 +7,7 @@ Publishes analytics insights and receives data from other modules.
 
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -140,22 +141,22 @@ class EventBus:
             # CFO fallback
             if target_module == "cfo" and settings.cfo_api_url:
                 response = httpx.post(
-                    f"{settings.cfo_api_url}/cfo/events/webhook",
+                    f"{settings.cfo_api_url}/cfo/events/receive",
                     json=event,
                     timeout=10.0
                 )
                 if response.status_code == 200:
-                    print(f"Published event {event_type} to CFO via HTTP webhook")
+                    print(f"Published event {event_type} to CFO via HTTP fallback")
 
             # COO fallback
             if target_module == "coo" and settings.coo_api_url:
                 response = httpx.post(
-                    f"{settings.coo_api_url}/coo/events/webhook",
+                    f"{settings.coo_api_url}/coo/events/receive",
                     json=event,
                     timeout=10.0
                 )
                 if response.status_code == 200:
-                    print(f"Published event {event_type} to COO via HTTP webhook")
+                    print(f"Published event {event_type} to COO via HTTP fallback")
 
             # CMO fallback (serverless)
             if target_module == "cmo" and settings.cmo_api_url:
@@ -211,6 +212,8 @@ class EventBus:
                 self._handle_margin_check_response(payload)
             elif event_type == CDOInboundEvent.CAPACITY_CHECK_RESPONSE.value:
                 self._handle_capacity_check_response(payload)
+            elif event_type == CDOInboundEvent.FINANCIAL_REPORT.value:
+                self._handle_financial_report(payload)
             else:
                 print(f"Unknown event type: {event_type}")
         except Exception as e:
@@ -240,16 +243,73 @@ class EventBus:
     def _handle_sales_data_updated(self, payload: Dict[str, Any]):
         """Handle sales data update - trigger analytics refresh."""
         print(f"Sales data updated: {payload}")
-        # TODO: Trigger analytics recalculation
+        db = SessionLocal()
+        try:
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO,
+                category="analytics",
+                title="Sales Data Updated",
+                message=f"New sales data received — analytics may need refresh. Period: {payload.get('period', 'unknown')}"
+            )
+            db.add(alert)
+            db.commit()
+        finally:
+            db.close()
 
     def _handle_inventory_updated(self, payload: Dict[str, Any]):
         """Handle inventory update from COO."""
         print(f"Inventory updated: {payload}")
-        # TODO: Update product performance metrics
+        db = SessionLocal()
+        try:
+            item_name = payload.get("item_name", "Unknown")
+            sku = payload.get("sku", "")
+            quantity = payload.get("quantity", 0)
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO,
+                category="inventory",
+                title="Inventory Updated",
+                message=f"COO reports inventory change: {item_name} ({sku}) now at {quantity} units"
+            )
+            db.add(alert)
+            db.commit()
+        finally:
+            db.close()
 
     def _handle_campaign_performance(self, payload: Dict[str, Any]):
         """Handle campaign performance from CMO."""
         print(f"Campaign performance: {payload}")
+        db = SessionLocal()
+        try:
+            campaign_name = payload.get("campaign_name", "Unknown")
+            roas = payload.get("roas", 0)
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO,
+                category="analytics",
+                title="Campaign Performance Update",
+                message=f"CMO campaign '{campaign_name}' ROAS: {roas:.2f}x"
+            )
+            db.add(alert)
+            db.commit()
+        finally:
+            db.close()
+
+    def _handle_financial_report(self, payload: Dict[str, Any]):
+        """Handle financial report from CFO."""
+        print(f"Financial report received: {payload}")
+        db = SessionLocal()
+        try:
+            report_type = payload.get("report_type", "general")
+            summary = payload.get("summary", "Financial report received from CFO")
+            alert = CDOAlert(
+                severity=AlertSeverity.INFO,
+                category="finance",
+                title=f"Financial Report: {report_type}",
+                message=summary
+            )
+            db.add(alert)
+            db.commit()
+        finally:
+            db.close()
 
     def _handle_margin_check_response(self, payload: Dict[str, Any]):
         """Handle margin check response from CFO."""
@@ -320,6 +380,31 @@ class EventBus:
             print(f"Error processing capacity check response: {e}")
         finally:
             db.close()
+
+    def start_listener(self):
+        """Start background Redis listener thread for incoming events."""
+        if not self.client:
+            print("Redis not connected - CDO listener not started")
+            return
+
+        def _listen():
+            try:
+                pubsub = self.client.pubsub()
+                pubsub.subscribe("dearborn:events:cdo", "dearborn:events:broadcast")
+                print("CDO Redis listener started on dearborn:events:cdo + broadcast")
+                for message in pubsub.listen():
+                    if message["type"] == "message":
+                        try:
+                            event = json.loads(message["data"])
+                            if event.get("source_module") != "cdo":
+                                self.handle_incoming_event(event)
+                        except Exception as e:
+                            print(f"CDO listener error: {e}")
+            except Exception as e:
+                print(f"CDO Redis listener failed: {e}")
+
+        thread = threading.Thread(target=_listen, daemon=True)
+        thread.start()
 
     def disconnect(self):
         """Disconnect from Redis."""

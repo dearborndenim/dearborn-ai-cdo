@@ -92,7 +92,7 @@ class ValidationOrchestrator:
 
         # Publish event
         event_id = event_bus.publish(
-            CDOOutboundEvent.DEMAND_FORECAST,  # reuse for now
+            CDOOutboundEvent.MARGIN_CHECK_REQUEST,
             {
                 **payload,
                 "title": f"Margin Check: {concept.title}",
@@ -138,7 +138,7 @@ class ValidationOrchestrator:
         self.db.flush()
 
         event_id = event_bus.publish(
-            CDOOutboundEvent.DEMAND_FORECAST,
+            CDOOutboundEvent.CAPACITY_CHECK_REQUEST,
             {
                 **payload,
                 "title": f"Capacity Check: {concept.title}",

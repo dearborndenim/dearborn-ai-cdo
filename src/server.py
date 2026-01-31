@@ -40,6 +40,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Scheduler startup failed: {e}")
 
+    # Start event bus listener
+    if event_bus.is_connected():
+        event_bus.start_listener()
+        logger.info("Event bus listener started")
+    else:
+        logger.warning("Event bus not connected (HTTP fallback enabled)")
+
     logger.info("CDO Module startup complete")
     yield
 
@@ -65,9 +72,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+import os as _os
+
+def _get_allowed_origins():
+    env = _os.getenv("ALLOWED_ORIGINS", "")
+    if env:
+        return [o.strip() for o in env.split(",")]
+    return []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_allowed_origins(),
+    allow_origin_regex=r"https://.*\.up\.railway\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
