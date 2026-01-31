@@ -111,13 +111,14 @@ class EventBus:
         if self.client:
             try:
                 channel = f"dearborn:events:{target_module}" if target_module else "dearborn:events:broadcast"
-                self.client.publish(channel, json.dumps(event))
-                print(f"Published event {event_type} to {channel}")
-                return event_id
+                receivers = self.client.publish(channel, json.dumps(event))
+                print(f"Published event {event_type} to {channel} ({receivers} receivers)")
+                if receivers > 0:
+                    return event_id
             except Exception as e:
                 print(f"Failed to publish to Redis: {e}")
 
-        # HTTP fallback
+        # HTTP fallback when Redis has no subscribers or is unavailable
         try:
             import httpx
 
