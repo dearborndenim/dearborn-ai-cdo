@@ -123,6 +123,15 @@ class PipelinePhase(str, PyEnum):
     CANCELLED = "cancelled"
 
 
+class SeasonStatus(str, PyEnum):
+    PLANNING = "planning"
+    RESEARCHING = "researching"
+    RESEARCH_COMPLETE = "research_complete"
+    IDEATION = "ideation"
+    IN_DEVELOPMENT = "in_development"
+    COMPLETE = "complete"
+
+
 # ============== Analytics Models ==============
 
 class SalesSnapshot(Base):
@@ -836,6 +845,63 @@ class ProductPipeline(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+# ============== Season Models ==============
+
+class Season(Base):
+    """Seasonal design assignment from CEO."""
+    __tablename__ = "seasons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)  # "Summer 2026"
+    season_code = Column(String(20), unique=True, index=True)  # "SU26"
+
+    target_demo = Column(JSON)  # {gender, age_range, income, location, description}
+    customer_research = Column(Text)  # AI-generated research
+
+    start_date = Column(DateTime)
+    end_date = Column(DateTime)
+
+    status = Column(Enum(SeasonStatus), default=SeasonStatus.PLANNING)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    ideas = relationship("SeasonProductIdea", back_populates="season", cascade="all, delete-orphan")
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class SeasonProductIdea(Base):
+    """AI-generated product idea for a season."""
+    __tablename__ = "season_product_ideas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    season_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.seasons.id'), nullable=False)
+
+    title = Column(String(255), nullable=False)
+    category = Column(String(100))
+    subcategory = Column(String(100))
+    description = Column(Text)
+    customer_fit = Column(Text)  # Why this product fits the target customer
+
+    suggested_retail = Column(Float)
+    estimated_cost = Column(Float)
+    estimated_margin = Column(Float)
+
+    priority = Column(String(20), default="medium")  # high, medium, low
+    ai_rationale = Column(Text)
+
+    status = Column(String(20), default="pending")  # pending, promoted, rejected
+    promoted_opportunity_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_opportunities.id'), nullable=True)
+    promoted_concept_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_concepts.id'), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    season = relationship("Season", back_populates="ideas")
 
     __table_args__ = ({'schema': CDO_SCHEMA},)
 

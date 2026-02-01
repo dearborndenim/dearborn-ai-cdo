@@ -15,7 +15,7 @@ from .event_bus import event_bus
 from .cdo.scheduler import start_scheduler, stop_scheduler
 from .routes import health, dashboard, tech_packs, patterns, product_ideas
 from .routes import trends, analytics, reports, shopify, events, alerts
-from .routes import discovery, pipeline
+from .routes import discovery, pipeline, seasonal
 
 settings = get_settings()
 logging.basicConfig(level=getattr(logging, settings.log_level))
@@ -103,6 +103,7 @@ app.include_router(events.router)
 app.include_router(alerts.router)
 app.include_router(discovery.router)
 app.include_router(pipeline.router)
+app.include_router(seasonal.router)
 
 
 if __name__ == "__main__":
