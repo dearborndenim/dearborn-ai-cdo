@@ -110,6 +110,10 @@ async def get_season(season_id: int, db: Session = Depends(get_db)):
             "estimated_cost": i.estimated_cost,
             "estimated_margin": i.estimated_margin,
             "status": i.status,
+            "image_url": i.image_url if hasattr(i, 'image_url') else None,
+            "labor_cost": i.labor_cost if hasattr(i, 'labor_cost') else None,
+            "material_cost": i.material_cost if hasattr(i, 'material_cost') else None,
+            "sewing_time_minutes": i.sewing_time_minutes if hasattr(i, 'sewing_time_minutes') else None,
         } for i in ideas],
     }
 
@@ -176,6 +180,10 @@ async def list_ideas(
             "priority": i.priority,
             "ai_rationale": i.ai_rationale,
             "status": i.status,
+            "image_url": i.image_url if hasattr(i, 'image_url') else None,
+            "labor_cost": i.labor_cost if hasattr(i, 'labor_cost') else None,
+            "material_cost": i.material_cost if hasattr(i, 'material_cost') else None,
+            "sewing_time_minutes": i.sewing_time_minutes if hasattr(i, 'sewing_time_minutes') else None,
             "promoted_concept_id": i.promoted_concept_id,
             "created_at": i.created_at.isoformat() if i.created_at else None,
         } for i in ideas],
@@ -204,3 +212,72 @@ async def promote_idea(
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.post("/cdo/seasons/{season_id}/ideas/{idea_id}/generate-image", tags=["Seasons"])
+async def generate_idea_image(
+    season_id: int,
+    idea_id: int,
+    db: Session = Depends(get_db),
+):
+    """Generate a DALL-E product sketch for an idea."""
+    idea = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.id == idea_id,
+        SeasonProductIdea.season_id == season_id,
+    ).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found in this season")
+
+    designer = SeasonalDesigner(db)
+    result = designer.generate_idea_image(idea_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    return result
+
+
+@router.post("/cdo/seasons/{season_id}/generate-all-images", tags=["Seasons"])
+async def generate_all_idea_images(
+    season_id: int,
+    db: Session = Depends(get_db),
+):
+    """Generate DALL-E images for all pending ideas in a season."""
+    season = db.query(Season).filter(Season.id == season_id).first()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    ideas = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.season_id == season_id,
+        SeasonProductIdea.image_url.is_(None),
+    ).all()
+
+    designer = SeasonalDesigner(db)
+    results = []
+    for idea in ideas:
+        result = designer.generate_idea_image(idea.id)
+        results.append(result)
+
+    return {
+        "season_id": season_id,
+        "images_generated": len([r for r in results if r and r.get("image_url")]),
+        "total_ideas": len(ideas),
+        "results": results,
+    }
+
+
+@router.post("/cdo/seasons/{season_id}/ideas/{idea_id}/reject", tags=["Seasons"])
+async def reject_idea(
+    season_id: int,
+    idea_id: int,
+    db: Session = Depends(get_db),
+):
+    """Reject a product idea."""
+    idea = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.id == idea_id,
+        SeasonProductIdea.season_id == season_id,
+    ).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found in this season")
+
+    idea.status = "rejected"
+    db.commit()
+    return {"success": True, "message": f"Idea '{idea.title}' rejected"}

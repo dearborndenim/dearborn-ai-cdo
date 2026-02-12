@@ -19,7 +19,7 @@ from ..db import (
     Season, SeasonProductIdea, SeasonStatus,
     ProductOpportunity, OpportunityStatus,
 )
-from .competency import CAN_MAKE, PRODUCT_CATEGORIES, estimate_pricing, is_feasible
+from .competency import CAN_MAKE, PRODUCT_CATEGORIES, estimate_pricing, is_feasible, estimate_manufacturing_cost
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -104,6 +104,15 @@ class SeasonalDesigner:
         else:
             ideas = self._ai_generate_ideas(season, count)
 
+        # Override AI cost estimates with real manufacturing calculations
+        for idea_data in ideas:
+            category = idea_data.get("category", "jeans")
+            mfg_cost = estimate_manufacturing_cost(category)
+            idea_data["estimated_cost"] = mfg_cost["total_manufacturing_cost"]
+            idea_data["labor_cost"] = mfg_cost["labor_cost"]
+            idea_data["material_cost"] = mfg_cost["material_cost"]
+            idea_data["sewing_time_minutes"] = mfg_cost["sewing_time_minutes"]
+
         # Save ideas to DB
         saved_ideas = []
         for idea_data in ideas:
@@ -124,6 +133,9 @@ class SeasonalDesigner:
                 priority=idea_data.get("priority", "medium"),
                 ai_rationale=idea_data.get("ai_rationale", ""),
                 status="pending",
+                labor_cost=idea_data.get("labor_cost"),
+                material_cost=idea_data.get("material_cost"),
+                sewing_time_minutes=idea_data.get("sewing_time_minutes"),
             )
             self.db.add(idea)
             saved_ideas.append(idea)
@@ -195,6 +207,40 @@ class SeasonalDesigner:
             idea.status = "promoted"
             self.db.commit()
 
+            # Publish events for cross-module awareness
+            from ..event_bus import event_bus, CDOOutboundEvent
+
+            # Notify CEO for approval tracking
+            event_bus.publish(
+                CDOOutboundEvent.PRODUCT_RECOMMENDATION,
+                {
+                    "title": f"New Product: {idea.title}",
+                    "message": f"Seasonal idea promoted to concept {concept.concept_number}",
+                    "concept_id": concept.id,
+                    "concept_number": concept.concept_number,
+                    "category": idea.category,
+                    "estimated_retail": idea.suggested_retail,
+                    "estimated_cost": idea.estimated_cost,
+                    "risk_level": "medium",
+                },
+                target_module="ceo"
+            )
+
+            # Notify CMO for marketing awareness
+            event_bus.publish(
+                CDOOutboundEvent.PRODUCT_PIPELINE_UPDATED,
+                {
+                    "title": f"New Product Entering Pipeline: {idea.title}",
+                    "message": f"Product idea '{idea.title}' has been promoted to the development pipeline",
+                    "concept_id": concept.id,
+                    "concept_number": concept.concept_number,
+                    "category": idea.category,
+                    "estimated_retail": idea.suggested_retail,
+                    "season_id": idea.season_id,
+                },
+                target_module="cmo"
+            )
+
             return {
                 "success": True,
                 "idea_id": idea.id,
@@ -214,6 +260,77 @@ class SeasonalDesigner:
             "concept_id": None,
             "message": f"Idea '{idea.title}' promoted to opportunity (concept creation pending)",
         }
+
+    def _get_existing_products(self) -> List[Dict]:
+        """Get existing product catalog for context in brainstorming."""
+        from ..db import ProductPerformance
+        try:
+            products = self.db.query(ProductPerformance).order_by(
+                ProductPerformance.revenue_30d.desc().nullslast()
+            ).limit(50).all()
+            return [{
+                "name": p.product_name,
+                "sku": p.sku,
+                "revenue_30d": float(p.revenue_30d) if p.revenue_30d else 0,
+            } for p in products]
+        except Exception as e:
+            logger.warning(f"Could not fetch existing products: {e}")
+            return []
+
+    def _get_recent_trends(self) -> List[Dict]:
+        """Get recent trend data for context in brainstorming."""
+        from ..db import TrendAnalysis
+        try:
+            trends = self.db.query(TrendAnalysis).order_by(
+                TrendAnalysis.trend_score.desc().nullslast()
+            ).limit(20).all()
+            return [{
+                "name": t.trend_name,
+                "score": float(t.trend_score) if t.trend_score else 0,
+                "category": t.category,
+            } for t in trends]
+        except Exception as e:
+            logger.warning(f"Could not fetch trends: {e}")
+            return []
+
+    def generate_idea_image(self, idea_id: int) -> Optional[Dict]:
+        """Generate a DALL-E product sketch for a seasonal idea."""
+        idea = self.db.query(SeasonProductIdea).filter(
+            SeasonProductIdea.id == idea_id
+        ).first()
+        if not idea:
+            return None
+
+        if not self.openai_client:
+            logger.warning("OpenAI not configured — cannot generate image")
+            return {"idea_id": idea_id, "image_url": None, "error": "OpenAI not configured"}
+
+        prompt = (
+            f"Technical fashion flat sketch of {idea.title}. "
+            f"Category: {idea.category or 'clothing'}. "
+            f"Clean technical flat drawing on white background, "
+            f"front and back view side by side, "
+            f"American workwear style, premium denim brand, "
+            f"fashion design illustration, no models, no mannequins, "
+            f"detailed construction lines showing stitching and hardware"
+        )
+
+        try:
+            response = self.openai_client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1,
+            )
+            image_url = response.data[0].url
+            idea.image_url = image_url
+            idea.image_prompt = prompt
+            self.db.commit()
+            return {"idea_id": idea.id, "image_url": image_url}
+        except Exception as e:
+            logger.error(f"DALL-E image generation failed for idea {idea_id}: {e}")
+            return {"idea_id": idea_id, "image_url": None, "error": str(e)}
 
     # ==================== AI Methods ====================
 
@@ -256,6 +373,26 @@ Write in a practical, business-oriented tone. Be specific with actionable insigh
 
     def _ai_generate_ideas(self, season: Season, count: int) -> List[Dict]:
         """Generate product ideas using OpenAI."""
+        # Gather context: existing products and trends
+        existing_products = self._get_existing_products()
+        recent_trends = self._get_recent_trends()
+
+        products_context = ""
+        if existing_products:
+            product_lines = [f"  - {p['name']} (SKU: {p['sku']}, 30-day revenue: ${p['revenue_30d']:,.0f})" for p in existing_products[:20]]
+            products_context = f"""
+Our current product catalog (top sellers):
+{chr(10).join(product_lines)}
+"""
+
+        trends_context = ""
+        if recent_trends:
+            trend_lines = [f"  - {t['name']} (score: {t['score']:.0f}, category: {t['category']})" for t in recent_trends[:10]]
+            trends_context = f"""
+Current market trends we're tracking:
+{chr(10).join(trend_lines)}
+"""
+
         # Build category summary for the prompt
         cat_summary = []
         for cat_name, cat_info in PRODUCT_CATEGORIES.items():
@@ -277,11 +414,18 @@ Based on this customer research:
 
 Target customer: {demo.get('gender', 'All')}, age {demo.get('age_range', '25-55')}, income {demo.get('income', '$75,000+')}, {demo.get('location', 'USA')}
 Season: {season.name}
-
+{products_context}
+{trends_context}
 Dearborn can manufacture these product types: {', '.join(CAN_MAKE)}
 
 Product categories with pricing:
 {chr(10).join(cat_summary)}
+
+Based on our current product lineup and market trends, suggest a mix of:
+- Variations/updates to our existing top sellers (e.g., new fabric, new fit, seasonal version)
+- New products similar to what we already make that fill gaps in our lineup
+
+For each suggestion, indicate whether it's a "variation" of an existing product or a "new" product.
 
 Suggest exactly {count} specific products for this season. For each product, provide:
 - title: A specific product name (e.g. "Summer Stretch Slim Jean" not just "Jeans")

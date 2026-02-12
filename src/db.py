@@ -405,6 +405,9 @@ class TechPackConstruction(Base):
     seam_allowance = Column(Float)
     topstitch_width = Column(Float)
 
+    # Time estimation
+    estimated_minutes = Column(Integer)
+
     notes = Column(Text)
     diagram_url = Column(String(500))  # Link to construction diagram
 
@@ -898,6 +901,12 @@ class SeasonProductIdea(Base):
     status = Column(String(20), default="pending")  # pending, promoted, rejected
     promoted_opportunity_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_opportunities.id'), nullable=True)
     promoted_concept_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.product_concepts.id'), nullable=True)
+
+    image_url = Column(String(500))
+    image_prompt = Column(Text)
+    labor_cost = Column(Float)
+    material_cost = Column(Float)
+    sewing_time_minutes = Column(Integer)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
@@ -352,3 +353,24 @@ async def update_tech_pack_status(
         )
 
     return {"success": True, "status": status.value}
+
+
+@router.get("/cdo/tech-packs/{tech_pack_id}/pdf", tags=["Tech Packs"])
+async def get_tech_pack_pdf(tech_pack_id: int, db: Session = Depends(get_db)):
+    """Generate and download a tech pack as PDF."""
+    from ..cdo.pdf_gen import generate_tech_pack_pdf
+
+    tech_pack = db.query(TechPack).filter(TechPack.id == tech_pack_id).first()
+    if not tech_pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found")
+
+    pdf_bytes = generate_tech_pack_pdf(db, tech_pack_id)
+    if not pdf_bytes:
+        raise HTTPException(status_code=500, detail="Failed to generate PDF")
+
+    filename = f"{tech_pack.tech_pack_number}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

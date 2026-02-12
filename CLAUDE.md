@@ -24,6 +24,7 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 - `POST /cdo/tech-packs` - Create tech pack
 - `GET /cdo/tech-packs/{id}` - Detail with measurements, materials, operations
 - `POST /cdo/tech-packs/{id}/generate` - AI-generate tech pack from description
+- `GET /cdo/tech-packs/{id}/pdf` - Download tech pack as PDF
 
 ### Patterns (`/cdo/patterns`)
 - `GET /cdo/patterns` - List pattern files

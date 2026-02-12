@@ -122,3 +122,83 @@ async def submit_idea_for_approval(
     )
 
     return {"success": True, "message": "Submitted for CEO approval"}
+
+
+@router.get("/cdo/all-ideas", tags=["Product Development"])
+async def list_all_ideas(
+    status: Optional[str] = None,
+    category: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """List all product ideas from both ProductIdea and SeasonProductIdea tables."""
+    from ..db import SeasonProductIdea, Season
+
+    results = []
+
+    # Query ProductIdea table
+    pi_query = db.query(ProductIdea)
+    if status:
+        pi_query = pi_query.filter(ProductIdea.status == status)
+    if category:
+        pi_query = pi_query.filter(ProductIdea.category == category)
+    for i in pi_query.order_by(ProductIdea.priority_score.desc().nullslast()).all():
+        results.append({
+            "id": i.id,
+            "source_table": "product_idea",
+            "title": i.title,
+            "description": i.description,
+            "category": i.category,
+            "status": i.status.value if i.status else "concept",
+            "priority_score": i.priority_score,
+            "estimated_cost": i.estimated_cost,
+            "estimated_retail": i.estimated_retail,
+            "estimated_margin": i.estimated_margin,
+            "image_url": None,
+            "labor_cost": None,
+            "material_cost": None,
+            "sewing_time_minutes": None,
+            "season_name": None,
+            "season_id": None,
+            "created_at": i.created_at.isoformat() if i.created_at else None,
+        })
+
+    # Query SeasonProductIdea table
+    spi_query = db.query(SeasonProductIdea).join(Season, SeasonProductIdea.season_id == Season.id)
+    if status:
+        spi_query = spi_query.filter(SeasonProductIdea.status == status)
+    if category:
+        spi_query = spi_query.filter(SeasonProductIdea.category == category)
+    for i in spi_query.order_by(SeasonProductIdea.id.desc()).all():
+        season = db.query(Season).filter(Season.id == i.season_id).first()
+        results.append({
+            "id": i.id,
+            "source_table": "season_idea",
+            "title": i.title,
+            "description": i.description,
+            "category": i.category,
+            "status": i.status or "pending",
+            "priority_score": None,
+            "estimated_cost": i.estimated_cost,
+            "estimated_retail": i.suggested_retail,
+            "estimated_margin": i.estimated_margin,
+            "image_url": getattr(i, 'image_url', None),
+            "labor_cost": getattr(i, 'labor_cost', None),
+            "material_cost": getattr(i, 'material_cost', None),
+            "sewing_time_minutes": getattr(i, 'sewing_time_minutes', None),
+            "season_name": season.name if season else None,
+            "season_id": i.season_id,
+            "created_at": i.created_at.isoformat() if i.created_at else None,
+        })
+
+    # Sort by created_at desc
+    results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+
+    total = len(results)
+    results = results[skip:skip + limit]
+
+    return {
+        "total": total,
+        "ideas": results,
+    }

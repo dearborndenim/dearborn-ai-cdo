@@ -201,3 +201,83 @@ def estimate_pricing(category: str, quality_tier: str = "mid") -> dict:
         "estimated_margin_pct": round(margin, 1),
         "typical_margin": info["typical_margin"],
     }
+
+
+# Chicago manufacturing labor rates
+LABOR_RATE_PER_HOUR = 26.00  # $17/hr base × 1.5 = $26/hr fully loaded (taxes, unemployment, benefits, PTO)
+
+# Estimated sewing time per category (minutes)
+SEWING_TIME_MINUTES = {
+    "jeans": 45,
+    "denim_pants": 50,
+    "chinos": 35,
+    "work_pants": 40,
+    "shorts": 25,
+    "denim_jackets": 55,
+    "chore_coats": 50,
+    "work_shirts": 40,
+    "button_down_shirts": 38,
+    "western_shirts": 42,
+    "shirts": 40,
+    "t_shirts": 15,
+    "henleys": 18,
+    "flannels": 40,
+    "overalls": 65,
+    "coveralls": 70,
+}
+
+
+def estimate_manufacturing_cost(category: str) -> dict:
+    """Estimate manufacturing cost based on Chicago labor rates + material BOM.
+
+    Uses $26/hr fully-loaded labor rate (1.5× of $17/hr base) which includes:
+    - Base wage: $17/hr
+    - Employer payroll taxes (FICA, FUTA, SUTA): ~$2.30/hr
+    - Workers comp insurance: ~$1.00/hr
+    - Health insurance contribution: ~$2.50/hr
+    - PTO/holidays/sick time: ~$1.70/hr
+    - Unemployment insurance: ~$0.50/hr
+    - Misc overhead (training, breaks): ~$1.00/hr
+    """
+    normalized = category.lower().replace(" ", "_").replace("-", "_")
+    sewing_minutes = SEWING_TIME_MINUTES.get(normalized, 40)  # default 40 min
+    labor_cost = (sewing_minutes / 60) * LABOR_RATE_PER_HOUR
+
+    # Get material cost from BOM templates
+    material_cost = _estimate_material_cost(normalized)
+
+    total_cost = labor_cost + material_cost
+
+    return {
+        "labor_cost": round(labor_cost, 2),
+        "material_cost": round(material_cost, 2),
+        "total_manufacturing_cost": round(total_cost, 2),
+        "sewing_time_minutes": sewing_minutes,
+        "labor_rate_per_hour": LABOR_RATE_PER_HOUR,
+    }
+
+
+def _estimate_material_cost(category: str) -> float:
+    """Estimate material cost from BOM templates in techpack_gen."""
+    try:
+        from .techpack_gen import BOM_TEMPLATES
+        bom = BOM_TEMPLATES.get(category, BOM_TEMPLATES.get("jeans", []))
+        total = 0.0
+        for item in bom:
+            qty = item.get("qty", item.get("quantity_per_unit", 0))
+            cost = item.get("cost", item.get("unit_cost", 0))
+            total += qty * cost
+        return total
+    except (ImportError, Exception):
+        # Fallback estimates if BOM_TEMPLATES not accessible
+        FALLBACK_MATERIAL_COSTS = {
+            "jeans": 18.50,
+            "denim_pants": 20.00,
+            "chinos": 14.00,
+            "shorts": 10.00,
+            "denim_jackets": 28.00,
+            "shirts": 14.00,
+            "t_shirts": 6.00,
+            "overalls": 30.00,
+        }
+        return FALLBACK_MATERIAL_COSTS.get(category, 15.00)

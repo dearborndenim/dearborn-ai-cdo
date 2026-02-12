@@ -230,6 +230,9 @@ class EventBus:
 
         db = SessionLocal()
         try:
+            from .db import ProductConcept, ProductPipeline, ConceptStatus, ValidationStatus
+
+            # Create alert
             alert = CDOAlert(
                 severity=AlertSeverity.INFO if status == "approved" else AlertSeverity.WARNING,
                 category="approval",
@@ -237,7 +240,37 @@ class EventBus:
                 message=f"CEO has {status} the CDO request"
             )
             db.add(alert)
+
+            # Update concept status if concept_id is in the payload
+            concept_id = payload.get("concept_id")
+            if concept_id:
+                concept = db.query(ProductConcept).filter(
+                    ProductConcept.id == concept_id
+                ).first()
+                if concept:
+                    if status == "approved":
+                        concept.ceo_approval = ValidationStatus.APPROVED
+                        concept.status = ConceptStatus.APPROVED
+                        concept.ceo_decision_notes = payload.get("feedback", "")
+                    elif status == "rejected":
+                        concept.ceo_approval = ValidationStatus.REJECTED
+                        concept.status = ConceptStatus.REJECTED
+                        concept.ceo_decision_notes = payload.get("feedback", "")
+
+                    # Auto-advance pipeline on approval
+                    if status == "approved":
+                        pipeline = db.query(ProductPipeline).filter(
+                            ProductPipeline.concept_id == concept_id
+                        ).first()
+                        if pipeline and pipeline.current_phase.value == "approval":
+                            from .cdo.pipeline import PipelineEngine
+                            engine = PipelineEngine(db)
+                            engine.advance_phase(pipeline.id, notes="CEO approved - auto-advancing")
+
             db.commit()
+        except Exception as e:
+            print(f"Error handling approval_decided: {e}")
+            db.rollback()
         finally:
             db.close()
 

@@ -198,11 +198,25 @@ class PipelineEngine:
     def _on_phase_enter(self, pipeline: ProductPipeline, phase: PipelinePhase):
         """Execute actions when entering a new phase."""
 
-        if phase == PipelinePhase.HANDOFF:
+        if phase == PipelinePhase.TECHNICAL_DESIGN:
+            # Auto-generate tech pack if concept exists but tech pack doesn't
+            if pipeline.concept_id and not pipeline.tech_pack_id:
+                try:
+                    from .techpack_gen import TechPackGenerator
+                    generator = TechPackGenerator(self.db)
+                    result = generator.generate_from_concept(pipeline.concept_id)
+                    if result and result.get("tech_pack_id"):
+                        pipeline.tech_pack_id = result["tech_pack_id"]
+                        logger.info(f"Auto-generated tech pack for pipeline {pipeline.pipeline_number}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-generate tech pack: {e}")
+
+        elif phase == PipelinePhase.HANDOFF:
             self._execute_handoff(pipeline)
 
         elif phase == PipelinePhase.COMPLETE:
             logger.info(f"Pipeline {pipeline.pipeline_number} completed")
+            self._on_complete(pipeline)
 
         # Notify CEO dashboard
         event_bus.publish(
@@ -274,8 +288,99 @@ class PipelineEngine:
         )
         pipeline.handoff_to_cfo = True
 
+    def _on_complete(self, pipeline: ProductPipeline):
+        """Execute actions when pipeline reaches COMPLETE phase."""
+        concept = None
+        if pipeline.concept_id:
+            concept = self.db.query(ProductConcept).filter(
+                ProductConcept.id == pipeline.concept_id
+            ).first()
+
+        # Notify COO: product approved for production, submit POs
+        event_bus.publish(
+            CDOOutboundEvent.PRODUCT_APPROVED_FOR_PRODUCTION,
+            {
+                "title": f"Production Approved: {pipeline.title}",
+                "message": f"Product '{pipeline.title}' approved for production. Submit purchase orders.",
+                "pipeline_id": pipeline.id,
+                "pipeline_number": pipeline.pipeline_number,
+                "category": pipeline.category,
+                "tech_pack_id": pipeline.tech_pack_id,
+            },
+            target_module="coo"
+        )
+
+        # Notify CFO: allocate production budget, update cashflow
+        event_bus.publish(
+            CDOOutboundEvent.PRODUCT_BUDGET_ALLOCATED,
+            {
+                "title": f"Budget Allocation: {pipeline.title}",
+                "message": f"Allocate production budget for {pipeline.title}",
+                "pipeline_id": pipeline.id,
+                "pipeline_number": pipeline.pipeline_number,
+                "estimated_cost": concept.target_cost if concept else None,
+                "estimated_retail": concept.target_retail if concept else None,
+                "estimated_units": 500,
+            },
+            target_module="cfo"
+        )
+
+        # Notify CMO: schedule marketing campaigns
+        event_bus.publish(
+            CDOOutboundEvent.PRODUCT_LAUNCH_SCHEDULED,
+            {
+                "title": f"Product Launch: {pipeline.title}",
+                "message": f"Schedule marketing campaigns for {pipeline.title}",
+                "pipeline_id": pipeline.id,
+                "pipeline_number": pipeline.pipeline_number,
+                "category": pipeline.category,
+                "target_retail": concept.target_retail if concept else None,
+                "sketch_url": concept.sketch_url if concept else None,
+            },
+            target_module="cmo"
+        )
+
     def _serialize_pipeline(self, p: ProductPipeline) -> Dict:
         """Serialize pipeline to dict."""
+        # Look up concept data if concept_id is present
+        concept_data = None
+        if p.concept_id:
+            concept = self.db.query(ProductConcept).filter(ProductConcept.id == p.concept_id).first()
+            if concept:
+                concept_data = {
+                    "id": concept.id,
+                    "concept_number": concept.concept_number,
+                    "title": concept.title,
+                    "category": concept.category,
+                    "brief": concept.brief,
+                    "target_customer": concept.target_customer,
+                    "key_features": concept.key_features,
+                    "differentiators": concept.differentiators,
+                    "sketch_url": concept.sketch_url,
+                    "sketch_share_link": concept.sketch_share_link,
+                    "target_retail": concept.target_retail,
+                    "target_cost": concept.target_cost,
+                    "target_margin": concept.target_margin,
+                    "pricing_rationale": concept.pricing_rationale,
+                    "status": concept.status.value if concept.status else None,
+                    "cfo_validation": concept.cfo_validation.value if concept.cfo_validation else None,
+                    "coo_validation": concept.coo_validation.value if concept.coo_validation else None,
+                    "ceo_approval": concept.ceo_approval.value if concept.ceo_approval else None,
+                }
+
+        # Look up tech pack data if tech_pack_id is present
+        tech_pack_data = None
+        if p.tech_pack_id:
+            tech_pack = self.db.query(TechPack).filter(TechPack.id == p.tech_pack_id).first()
+            if tech_pack:
+                tech_pack_data = {
+                    "id": tech_pack.id,
+                    "tech_pack_number": tech_pack.tech_pack_number,
+                    "title": tech_pack.title,
+                    "category": tech_pack.category,
+                    "status": tech_pack.status,
+                }
+
         return {
             "id": p.id,
             "pipeline_number": p.pipeline_number,
@@ -300,6 +405,8 @@ class PipelineEngine:
                 "completed": p.completed_at.isoformat() if p.completed_at else None,
             },
             "phase_notes": p.phase_notes,
+            "concept": concept_data,
+            "tech_pack": tech_pack_data,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         }
