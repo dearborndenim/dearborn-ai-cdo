@@ -35,7 +35,6 @@ CANNOT_MAKE = [
     "formal_wear",
     "athletic_wear",
     "swimwear",
-    "knitwear",
     "leather_goods",
 ]
 
@@ -113,6 +112,16 @@ PRODUCT_CATEGORIES = {
         "typical_margin": 0.50,
         "construction_ops": 60,
     },
+    "knitwear": {
+        "subcategories": ["sweater", "cardigan", "knit_polo", "pullover"],
+        "base_pattern": None,
+        "size_range": {"alpha": ["S", "M", "L", "XL", "XXL"]},
+        "typical_cost_range": (20, 45),
+        "typical_retail_range": (68, 148),
+        "typical_margin": 0.55,
+        "construction_ops": 0,
+        "sourced_externally": True,
+    },
 }
 
 # Competitors to track
@@ -158,6 +167,24 @@ COMPETITORS = {
         "url": "https://www.uniqlo.com",
         "categories": ["jeans", "chinos", "shirts", "t_shirts"],
         "price_tier": "value",
+    },
+    "buck_mason": {
+        "name": "Buck Mason",
+        "url": "https://www.buckmason.com",
+        "categories": ["jeans", "t_shirts", "shirts"],
+        "price_tier": "premium",
+    },
+    "todd_snyder": {
+        "name": "Todd Snyder",
+        "url": "https://www.toddsnyder.com",
+        "categories": ["jeans", "chinos", "shirts", "knitwear"],
+        "price_tier": "premium",
+    },
+    "taylor_stitch": {
+        "name": "Taylor Stitch",
+        "url": "https://www.taylorstitch.com",
+        "categories": ["jeans", "shirts", "denim_jackets", "chinos"],
+        "price_tier": "premium",
     },
 }
 
@@ -230,6 +257,9 @@ SEWING_TIME_MINUTES = {
 def estimate_manufacturing_cost(category: str) -> dict:
     """Estimate manufacturing cost based on Chicago labor rates + material BOM.
 
+    For externally sourced categories (knitwear), returns average sourcing cost
+    with zero labor since these are purchased from partners, not sewn in-house.
+
     Uses $26/hr fully-loaded labor rate (1.5× of $17/hr base) which includes:
     - Base wage: $17/hr
     - Employer payroll taxes (FICA, FUTA, SUTA): ~$2.30/hr
@@ -240,6 +270,21 @@ def estimate_manufacturing_cost(category: str) -> dict:
     - Misc overhead (training, breaks): ~$1.00/hr
     """
     normalized = category.lower().replace(" ", "_").replace("-", "_")
+
+    # Check if externally sourced
+    cat_info = PRODUCT_CATEGORIES.get(normalized, {})
+    if cat_info.get("sourced_externally"):
+        cost_low, cost_high = cat_info.get("typical_cost_range", (20, 45))
+        avg_cost = (cost_low + cost_high) / 2
+        return {
+            "labor_cost": 0.0,
+            "material_cost": round(avg_cost, 2),
+            "total_manufacturing_cost": round(avg_cost, 2),
+            "sewing_time_minutes": 0,
+            "labor_rate_per_hour": 0.0,
+            "sourced_externally": True,
+        }
+
     sewing_minutes = SEWING_TIME_MINUTES.get(normalized, 40)  # default 40 min
     labor_cost = (sewing_minutes / 60) * LABOR_RATE_PER_HOUR
 

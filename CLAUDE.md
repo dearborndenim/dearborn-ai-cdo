@@ -7,7 +7,7 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 - **Framework:** FastAPI (Python)
 - **Database:** PostgreSQL (schema: `cdo`)
 - **Event Bus:** Redis pub/sub (sync, threading-based)
-- **AI:** OpenAI GPT-4o for research/ideas, DALL-E 3 for concepts
+- **AI:** Perplexity Sonar for web-grounded trend research, OpenAI GPT-4o for structured ideation, DALL-E 3 for concepts
 - **Port:** 8004 (configurable via `PORT`)
 - **Deploy:** Railway
 
@@ -44,10 +44,15 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 ### Seasonal Collections (`/cdo/seasons`)
 - `GET /cdo/seasons` - List seasons
 - `POST /cdo/seasons` - Create season with target demo
-- `GET /cdo/seasons/{id}` - Season detail with ideas
-- `POST /cdo/seasons/{id}/research` - AI customer research
-- `POST /cdo/seasons/{id}/generate-ideas` - AI product ideation
+- `GET /cdo/seasons/{id}` - Season detail with looks + flat ideas
+- `POST /cdo/seasons/{id}/research` - 5-step research (4 Perplexity + 1 GPT-4o)
+- `GET /cdo/seasons/{id}/research` - Get structured research sections with citations
+- `POST /cdo/seasons/{id}/generate-ideas` - Generate coordinated looks (`?look_count=5`)
+- `GET /cdo/seasons/{id}/looks` - Get looks with their pieces
+- `GET /cdo/seasons/{id}/ideas` - Flat idea list
 - `POST /cdo/seasons/{id}/ideas/{idea_id}/promote` - Promote idea to pipeline
+- `POST /cdo/seasons/{id}/ideas/{idea_id}/generate-image` - DALL-E sketch
+- `POST /cdo/seasons/{id}/ideas/{idea_id}/reject` - Reject idea
 
 ### Pipeline (`/cdo/pipeline`)
 - `GET /cdo/pipeline` - Full pipeline (DISCOVERY through COMPLETE)
@@ -57,6 +62,7 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 - `POST /cdo/pipeline/{id}/validate` - Trigger cross-module validation
 
 ### Shopify Sync (`/cdo/sync`)
+- `GET /cdo/sync/status` - Sync data freshness (age, record count)
 - `POST /cdo/sync/orders` - Sync Shopify orders via GraphQL
 
 ### Reports (`/cdo/reports`)
@@ -104,6 +110,7 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 | `REDIS_URL` | Yes | `redis://localhost:6379` | Redis event bus |
 | `PORT` | No | 8004 | Server port |
 | `ALLOWED_ORIGINS` | No | `""` | CORS origins |
+| `PERPLEXITY_API_KEY` | No | `""` | Perplexity Sonar for trend research |
 | `OPENAI_API_KEY` | Yes | | OpenAI for AI features |
 | `SHOPIFY_STORE` | No | `dearborndenim.myshopify.com` | Shopify store |
 | `SHOPIFY_ACCESS_TOKEN` | No | | Shopify API token |
@@ -130,6 +137,10 @@ src/
     concept.py       - Concept generation
     validation.py    - Cross-module validation orchestrator
     pipeline.py      - Pipeline state management
+    seasonal.py      - Seasonal design: research + coordinated look generation
+    trend_researcher.py - Perplexity Sonar trend research with GPT-4o fallback
+    competency.py    - Core competency filter, product categories, pricing
+    scheduler.py     - APScheduler (discovery scan, validation timeout, Shopify sync)
   routes/            - FastAPI route modules (13 files)
     health.py, dashboard.py, tech_packs.py, patterns.py,
     trends.py, product_ideas.py, pipeline.py, seasonal.py,

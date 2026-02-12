@@ -2,11 +2,11 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db import get_db, Season, SeasonProductIdea, SeasonStatus
+from ..db import get_db, Season, SeasonProductIdea, SeasonLook, SeasonResearch, SeasonStatus
 from ..cdo.seasonal import SeasonalDesigner
 
 router = APIRouter()
@@ -23,7 +23,6 @@ class SeasonCreate(BaseModel):
 @router.post("/cdo/seasons", tags=["Seasons"])
 async def create_season(body: SeasonCreate, db: Session = Depends(get_db)):
     """Create a new seasonal design assignment."""
-    # Check for duplicate season code
     existing = db.query(Season).filter(Season.season_code == body.season_code).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Season code '{body.season_code}' already exists")
@@ -73,6 +72,7 @@ async def list_seasons(
             "start_date": s.start_date.isoformat() if s.start_date else None,
             "end_date": s.end_date.isoformat() if s.end_date else None,
             "idea_count": len(s.ideas) if s.ideas else 0,
+            "look_count": len(s.looks) if s.looks else 0,
             "created_at": s.created_at.isoformat() if s.created_at else None,
         } for s in seasons],
     }
@@ -80,7 +80,7 @@ async def list_seasons(
 
 @router.get("/cdo/seasons/{season_id}", tags=["Seasons"])
 async def get_season(season_id: int, db: Session = Depends(get_db)):
-    """Get season detail including customer research and idea summary."""
+    """Get season detail including research, looks, and flat ideas list."""
     season = db.query(Season).filter(Season.id == season_id).first()
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
@@ -88,6 +88,10 @@ async def get_season(season_id: int, db: Session = Depends(get_db)):
     ideas = db.query(SeasonProductIdea).filter(
         SeasonProductIdea.season_id == season_id
     ).order_by(SeasonProductIdea.priority.desc()).all()
+
+    looks = db.query(SeasonLook).filter(
+        SeasonLook.season_id == season_id
+    ).order_by(SeasonLook.look_number).all()
 
     return {
         "id": season.id,
@@ -100,27 +104,25 @@ async def get_season(season_id: int, db: Session = Depends(get_db)):
         "end_date": season.end_date.isoformat() if season.end_date else None,
         "created_at": season.created_at.isoformat() if season.created_at else None,
         "updated_at": season.updated_at.isoformat() if season.updated_at else None,
-        "ideas": [{
-            "id": i.id,
-            "title": i.title,
-            "category": i.category,
-            "subcategory": i.subcategory,
-            "priority": i.priority,
-            "suggested_retail": i.suggested_retail,
-            "estimated_cost": i.estimated_cost,
-            "estimated_margin": i.estimated_margin,
-            "status": i.status,
-            "image_url": i.image_url if hasattr(i, 'image_url') else None,
-            "labor_cost": i.labor_cost if hasattr(i, 'labor_cost') else None,
-            "material_cost": i.material_cost if hasattr(i, 'material_cost') else None,
-            "sewing_time_minutes": i.sewing_time_minutes if hasattr(i, 'sewing_time_minutes') else None,
-        } for i in ideas],
+        "looks": [{
+            "id": look.id,
+            "look_number": look.look_number,
+            "name": look.name,
+            "theme": look.theme,
+            "occasion": look.occasion,
+            "styling_notes": look.styling_notes,
+            "pieces": [_serialize_idea(i) for i in ideas if i.look_id == look.id],
+        } for look in looks],
+        "ideas": [_serialize_idea(i) for i in ideas],
     }
 
 
 @router.post("/cdo/seasons/{season_id}/research", tags=["Seasons"])
 async def research_customer(season_id: int, db: Session = Depends(get_db)):
-    """Trigger AI customer research for the season's target demographic."""
+    """Trigger 5-step research: 4 Perplexity trend sections + 1 GPT-4o customer profile.
+
+    Returns structured research sections with citations.
+    """
     designer = SeasonalDesigner(db)
     result = designer.research_customer(season_id)
     if not result:
@@ -128,20 +130,88 @@ async def research_customer(season_id: int, db: Session = Depends(get_db)):
     return result
 
 
+@router.get("/cdo/seasons/{season_id}/research", tags=["Seasons"])
+async def get_research(season_id: int, db: Session = Depends(get_db)):
+    """Get structured research sections with citations for a season."""
+    season = db.query(Season).filter(Season.id == season_id).first()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    records = db.query(SeasonResearch).filter(
+        SeasonResearch.season_id == season_id
+    ).order_by(SeasonResearch.id).all()
+
+    return {
+        "season_id": season.id,
+        "season_name": season.name,
+        "total_sections": len(records),
+        "total_citations": sum(len(r.citations or []) for r in records),
+        "sections": [{
+            "id": r.id,
+            "research_type": r.research_type,
+            "content": r.content,
+            "citations": r.citations or [],
+            "source": r.source,
+            "model_used": r.model_used,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in records],
+    }
+
+
 @router.post("/cdo/seasons/{season_id}/generate-ideas", tags=["Seasons"])
 async def generate_ideas(
     season_id: int,
-    count: int = 8,
+    look_count: int = Query(default=5, alias="look_count"),
+    count: int = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Generate AI product ideas for the season."""
+    """Generate coordinated looks for the season.
+
+    Each look is a themed outfit with 2-4 pieces.
+    look_count = number of looks (default 5), yielding 10-20 total items.
+    """
+    # Support both 'look_count' and legacy 'count' parameter
+    num_looks = count if count is not None else look_count
+
     designer = SeasonalDesigner(db)
-    result = designer.generate_product_ideas(season_id, count=count)
+    result = designer.generate_product_ideas(season_id, count=num_looks)
     if not result:
         raise HTTPException(status_code=404, detail="Season not found")
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.get("/cdo/seasons/{season_id}/looks", tags=["Seasons"])
+async def get_looks(season_id: int, db: Session = Depends(get_db)):
+    """Get coordinated looks with their pieces for a season."""
+    season = db.query(Season).filter(Season.id == season_id).first()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    looks = db.query(SeasonLook).filter(
+        SeasonLook.season_id == season_id
+    ).order_by(SeasonLook.look_number).all()
+
+    ideas = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.season_id == season_id
+    ).all()
+
+    return {
+        "season_id": season.id,
+        "season_name": season.name,
+        "total_looks": len(looks),
+        "total_pieces": len(ideas),
+        "looks": [{
+            "id": look.id,
+            "look_number": look.look_number,
+            "name": look.name,
+            "theme": look.theme,
+            "occasion": look.occasion,
+            "styling_notes": look.styling_notes,
+            "pieces": [_serialize_idea(i) for i in ideas if i.look_id == look.id],
+        } for look in looks],
+    }
 
 
 @router.get("/cdo/seasons/{season_id}/ideas", tags=["Seasons"])
@@ -150,7 +220,7 @@ async def list_ideas(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """List product ideas for a season."""
+    """List product ideas for a season (flat list)."""
     season = db.query(Season).filter(Season.id == season_id).first()
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
@@ -167,26 +237,7 @@ async def list_ideas(
         "season_id": season.id,
         "season_name": season.name,
         "total": len(ideas),
-        "ideas": [{
-            "id": i.id,
-            "title": i.title,
-            "category": i.category,
-            "subcategory": i.subcategory,
-            "description": i.description,
-            "customer_fit": i.customer_fit,
-            "suggested_retail": i.suggested_retail,
-            "estimated_cost": i.estimated_cost,
-            "estimated_margin": i.estimated_margin,
-            "priority": i.priority,
-            "ai_rationale": i.ai_rationale,
-            "status": i.status,
-            "image_url": i.image_url if hasattr(i, 'image_url') else None,
-            "labor_cost": i.labor_cost if hasattr(i, 'labor_cost') else None,
-            "material_cost": i.material_cost if hasattr(i, 'material_cost') else None,
-            "sewing_time_minutes": i.sewing_time_minutes if hasattr(i, 'sewing_time_minutes') else None,
-            "promoted_concept_id": i.promoted_concept_id,
-            "created_at": i.created_at.isoformat() if i.created_at else None,
-        } for i in ideas],
+        "ideas": [_serialize_idea(i) for i in ideas],
     }
 
 
@@ -197,7 +248,6 @@ async def promote_idea(
     db: Session = Depends(get_db),
 ):
     """Promote a product idea into the product pipeline."""
-    # Verify idea belongs to the season
     idea = db.query(SeasonProductIdea).filter(
         SeasonProductIdea.id == idea_id,
         SeasonProductIdea.season_id == season_id,
@@ -281,3 +331,38 @@ async def reject_idea(
     idea.status = "rejected"
     db.commit()
     return {"success": True, "message": f"Idea '{idea.title}' rejected"}
+
+
+def _serialize_idea(i: SeasonProductIdea) -> dict:
+    """Serialize a SeasonProductIdea to dict with all new fields."""
+    return {
+        "id": i.id,
+        "look_id": i.look_id,
+        "title": i.title,
+        "category": i.category,
+        "subcategory": i.subcategory,
+        "style": i.style,
+        "description": i.description,
+        "customer_fit": i.customer_fit,
+        "fabric_recommendation": i.fabric_recommendation,
+        "fabric_weight": i.fabric_weight,
+        "fabric_weave": i.fabric_weave,
+        "fabric_composition": i.fabric_composition,
+        "fabric_type": i.fabric_type,
+        "colorway": i.colorway,
+        "sourced_externally": i.sourced_externally,
+        "trend_citations": i.trend_citations,
+        "suggested_vendors": i.suggested_vendors,
+        "suggested_retail": i.suggested_retail,
+        "estimated_cost": i.estimated_cost,
+        "estimated_margin": i.estimated_margin,
+        "priority": i.priority,
+        "ai_rationale": i.ai_rationale,
+        "status": i.status,
+        "image_url": i.image_url,
+        "labor_cost": i.labor_cost,
+        "material_cost": i.material_cost,
+        "sewing_time_minutes": i.sewing_time_minutes,
+        "promoted_concept_id": i.promoted_concept_id,
+        "created_at": i.created_at.isoformat() if i.created_at else None,
+    }

@@ -222,6 +222,35 @@ def _update_product_performance(orders: list, db: Session):
     return updated_count
 
 
+@router.get("/cdo/sync/status", tags=["Sync"])
+async def sync_status(db: Session = Depends(get_db)):
+    """Return age and freshness of latest ProductPerformance data."""
+    latest = db.query(ProductPerformance).order_by(
+        ProductPerformance.last_updated.desc().nullslast()
+    ).first()
+
+    if not latest or not latest.last_updated:
+        return {
+            "has_data": False,
+            "last_updated": None,
+            "age_hours": None,
+            "is_fresh": False,
+            "record_count": 0,
+        }
+
+    age = datetime.utcnow() - latest.last_updated
+    age_hours = age.total_seconds() / 3600
+    record_count = db.query(ProductPerformance).count()
+
+    return {
+        "has_data": True,
+        "last_updated": latest.last_updated.isoformat(),
+        "age_hours": round(age_hours, 1),
+        "is_fresh": age_hours < 168,  # < 7 days
+        "record_count": record_count,
+    }
+
+
 @router.get("/cdo/auth/shopify", tags=["Auth"])
 async def shopify_auth_redirect():
     """Initiate Shopify OAuth flow."""

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     shopify_client_secret: str = os.getenv("SHOPIFY_CLIENT_SECRET", "")
     shopify_access_token: str = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 
+    # Perplexity for web-grounded trend research
+    perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
+
     # OpenAI for product recommendations and tech pack generation
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")

@@ -863,7 +863,7 @@ class Season(Base):
     season_code = Column(String(20), unique=True, index=True)  # "SU26"
 
     target_demo = Column(JSON)  # {gender, age_range, income, location, description}
-    customer_research = Column(Text)  # AI-generated research
+    customer_research = Column(Text)  # AI-generated research (backward compat)
 
     start_date = Column(DateTime)
     end_date = Column(DateTime)
@@ -874,8 +874,54 @@ class Season(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     ideas = relationship("SeasonProductIdea", back_populates="season", cascade="all, delete-orphan")
+    looks = relationship("SeasonLook", back_populates="season", cascade="all, delete-orphan")
+    research = relationship("SeasonResearch", back_populates="season", cascade="all, delete-orphan")
 
     __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class SeasonResearch(Base):
+    """Structured research section for a season (replaces single text blob)."""
+    __tablename__ = "season_research"
+
+    id = Column(Integer, primary_key=True, index=True)
+    season_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.seasons.id'), nullable=False)
+
+    research_type = Column(String(50), nullable=False)  # fashion_trends, fabric_trends, silhouette_trends, competitor_analysis, customer_profile
+    content = Column(Text)
+    citations = Column(JSON)  # [{url, title}, ...]
+    source = Column(String(50))  # perplexity, gpt4o, placeholder
+    model_used = Column(String(100))
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    season = relationship("Season", back_populates="research")
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
+class SeasonLook(Base):
+    """Coordinated outfit (2-4 pieces) within a season."""
+    __tablename__ = "season_looks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    season_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.seasons.id'), nullable=False)
+
+    look_number = Column(Integer, nullable=False)
+    name = Column(String(255))  # "Heritage Workwear"
+    theme = Column(Text)
+    occasion = Column(String(255))  # "weekend casual"
+    styling_notes = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    season = relationship("Season", back_populates="looks")
+    ideas = relationship("SeasonProductIdea", back_populates="look", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint('season_id', 'look_number', name='uq_season_look_number'),
+        {'schema': CDO_SCHEMA}
+    )
 
 
 class SeasonProductIdea(Base):
@@ -884,12 +930,26 @@ class SeasonProductIdea(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     season_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.seasons.id'), nullable=False)
+    look_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.season_looks.id'), nullable=True)
 
     title = Column(String(255), nullable=False)
     category = Column(String(100))
     subcategory = Column(String(100))
+    style = Column(String(100))  # "slim tapered", "trucker", "henley"
     description = Column(Text)
-    customer_fit = Column(Text)  # Why this product fits the target customer
+    customer_fit = Column(Text)
+
+    # Fabric details
+    fabric_recommendation = Column(String(255))  # "14oz Japanese selvedge"
+    fabric_weight = Column(String(50))  # "14oz"
+    fabric_weave = Column(String(50))  # "twill", "dobby", "plain", "knit"
+    fabric_composition = Column(String(255))  # "98% cotton, 2% elastane"
+    fabric_type = Column(String(50))  # "woven" or "knit"
+
+    colorway = Column(JSON)  # ["raw indigo", "rinsed black"]
+    sourced_externally = Column(Boolean, default=False)
+    trend_citations = Column(JSON)  # [{url, title}, ...]
+    suggested_vendors = Column(JSON)  # ["Carr Textiles", "Collect Mills"]
 
     suggested_retail = Column(Float)
     estimated_cost = Column(Float)
@@ -911,6 +971,7 @@ class SeasonProductIdea(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     season = relationship("Season", back_populates="ideas")
+    look = relationship("SeasonLook", back_populates="ideas")
 
     __table_args__ = ({'schema': CDO_SCHEMA},)
 
