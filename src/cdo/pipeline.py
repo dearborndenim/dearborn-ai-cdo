@@ -120,12 +120,17 @@ class PipelineEngine:
             return None
 
         elif current == PipelinePhase.VALIDATION:
-            # Need both validations complete
+            # Auto-validate if not yet validated
             if pipeline.concept_id:
                 concept = self.db.query(ProductConcept).filter(
                     ProductConcept.id == pipeline.concept_id
                 ).first()
-                if concept and concept.status == ConceptStatus.VALIDATED:
+                if concept:
+                    if concept.status != ConceptStatus.VALIDATED:
+                        from .validation import ValidationOrchestrator
+                        orchestrator = ValidationOrchestrator(self.db)
+                        orchestrator.request_validation(pipeline.concept_id)
+                        logger.info(f"Auto-validated concept {concept.concept_number} on advance")
                     return PipelinePhase.APPROVAL
             return None
 
