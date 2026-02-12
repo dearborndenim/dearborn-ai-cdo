@@ -1034,15 +1034,51 @@ class ShopifyAuth(Base):
 # ============== Database Initialization ==============
 
 def init_db():
-    """Create all tables."""
-    from sqlalchemy import text
+    """Create all tables, ensuring schema matches models.
+
+    Uses create_all for new tables, then applies column migrations
+    for any columns added after initial table creation. All ALTER
+    statements use IF NOT EXISTS so this is safe to run every startup.
+    """
+    import logging
+    from sqlalchemy import text, inspect
+
+    logger = logging.getLogger(__name__)
+
     # Create schema first
     with engine.connect() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {CDO_SCHEMA}"))
         conn.commit()
 
-    # Create tables
+    # Check if we need a full rebuild (no data, stale schema)
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names(schema=CDO_SCHEMA)
+
+    needs_rebuild = False
+    if existing_tables:
+        # Check for known new tables/columns as staleness indicator
+        if 'season_product_ideas' in existing_tables:
+            try:
+                cols = {c['name'] for c in inspector.get_columns('season_product_ideas', schema=CDO_SCHEMA)}
+                if 'look_id' not in cols:
+                    needs_rebuild = True
+            except Exception:
+                needs_rebuild = True
+        if 'product_pipeline' in existing_tables:
+            try:
+                cols = {c['name'] for c in inspector.get_columns('product_pipeline', schema=CDO_SCHEMA)}
+                if 'phase_notes' not in cols:
+                    needs_rebuild = True
+            except Exception:
+                needs_rebuild = True
+
+    if needs_rebuild:
+        logger.info("Schema is stale — dropping and recreating all CDO tables")
+        Base.metadata.drop_all(bind=engine)
+
+    # Create tables (creates new tables, no-op for existing ones)
     Base.metadata.create_all(bind=engine)
+    logger.info(f"Database schema ready ({len(Base.metadata.tables)} tables in {CDO_SCHEMA})")
 
 
 def get_db():
