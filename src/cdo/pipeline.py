@@ -106,12 +106,13 @@ class PipelineEngine:
             return PipelinePhase.CONCEPT
 
         elif current == PipelinePhase.CONCEPT:
-            # Need concept brief complete
+            # Need concept linked (promoted ideas from seasons are ready to advance)
             if pipeline.concept_id:
                 concept = self.db.query(ProductConcept).filter(
                     ProductConcept.id == pipeline.concept_id
                 ).first()
                 if concept and concept.status in (
+                    ConceptStatus.DRAFT,
                     ConceptStatus.BRIEF_COMPLETE,
                     ConceptStatus.SKETCH_GENERATED,
                 ):

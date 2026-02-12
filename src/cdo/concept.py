@@ -59,7 +59,7 @@ class ConceptDesigner:
             target_retail=opp.estimated_retail or pricing.get("estimated_retail"),
             target_cost=opp.estimated_cost or pricing.get("estimated_cost"),
             target_margin=opp.estimated_margin or pricing.get("estimated_margin_pct"),
-            status=ConceptStatus.DRAFT,
+            status=ConceptStatus.BRIEF_COMPLETE,
         )
 
         opp.status = OpportunityStatus.PROMOTED

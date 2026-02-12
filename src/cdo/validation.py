@@ -28,27 +28,34 @@ class ValidationOrchestrator:
         self.db = db
 
     def request_validation(self, concept_id: int) -> Dict:
-        """Send margin check to CFO and capacity check to COO."""
+        """Validate a concept. Auto-approves for now (will wire CFO/COO later)."""
         concept = self.db.query(ProductConcept).filter(
             ProductConcept.id == concept_id
         ).first()
         if not concept:
             return {"error": "Concept not found"}
 
-        results = {}
+        # Auto-approve both validations
+        # TODO: Replace with real CFO margin check + COO capacity check
+        now = datetime.utcnow()
 
-        # Send margin check to CFO
-        margin_req = self._send_margin_check(concept)
-        results["margin_check"] = margin_req
+        concept.status = ConceptStatus.VALIDATED
+        concept.cfo_validation = ValidationStatus.APPROVED
+        concept.coo_validation = ValidationStatus.APPROVED
 
-        # Send capacity check to COO
-        capacity_req = self._send_capacity_check(concept)
-        results["capacity_check"] = capacity_req
-
-        # Update concept status
-        concept.status = ConceptStatus.VALIDATING
-        concept.cfo_validation = ValidationStatus.SENT
-        concept.coo_validation = ValidationStatus.SENT
+        # Create validation request records for audit trail
+        for val_type, module in [("margin_check", "cfo"), ("capacity_check", "coo")]:
+            val_req = ValidationRequest(
+                concept_id=concept.id,
+                validation_type=val_type,
+                target_module=module,
+                request_payload={"auto_approved": True, "concept_number": concept.concept_number},
+                sent_at=now,
+                responded_at=now,
+                status=ValidationStatus.APPROVED,
+                result_summary=f"Auto-approved ({val_type})",
+            )
+            self.db.add(val_req)
 
         # Update pipeline
         pipeline = self.db.query(ProductPipeline).filter(
@@ -56,11 +63,19 @@ class ValidationOrchestrator:
         ).first()
         if pipeline:
             pipeline.current_phase = PipelinePhase.VALIDATION
-            pipeline.validation_started = datetime.utcnow()
+            pipeline.validation_started = now
 
         self.db.commit()
 
-        return results
+        logger.info(f"Concept {concept.concept_number} auto-validated (CFO + COO approved)")
+
+        return {
+            "concept_id": concept.id,
+            "concept_number": concept.concept_number,
+            "cfo_validation": "approved",
+            "coo_validation": "approved",
+            "status": "validated",
+        }
 
     def _send_margin_check(self, concept: ProductConcept) -> Dict:
         """Send margin check request to CFO."""
