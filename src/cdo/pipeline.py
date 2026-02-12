@@ -130,12 +130,15 @@ class PipelineEngine:
             return None
 
         elif current == PipelinePhase.APPROVAL:
-            # Need CEO approval
+            # Auto-approve CEO (Rob is the CEO using this UI)
             if pipeline.concept_id:
                 concept = self.db.query(ProductConcept).filter(
                     ProductConcept.id == pipeline.concept_id
                 ).first()
-                if concept and concept.ceo_approval == ValidationStatus.APPROVED:
+                if concept:
+                    if concept.ceo_approval != ValidationStatus.APPROVED:
+                        concept.ceo_approval = ValidationStatus.APPROVED
+                        logger.info(f"Auto-approved CEO for concept {concept.concept_number}")
                     return PipelinePhase.TECHNICAL_DESIGN
             return None
 
