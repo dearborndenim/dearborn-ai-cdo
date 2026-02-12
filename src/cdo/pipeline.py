@@ -199,7 +199,18 @@ class PipelineEngine:
     def _on_phase_enter(self, pipeline: ProductPipeline, phase: PipelinePhase):
         """Execute actions when entering a new phase."""
 
-        if phase == PipelinePhase.TECHNICAL_DESIGN:
+        if phase == PipelinePhase.VALIDATION:
+            # Trigger validation (auto-approves CFO + COO for now)
+            if pipeline.concept_id:
+                try:
+                    from .validation import ValidationOrchestrator
+                    orchestrator = ValidationOrchestrator(self.db)
+                    orchestrator.request_validation(pipeline.concept_id)
+                    logger.info(f"Validation triggered for pipeline {pipeline.pipeline_number}")
+                except Exception as e:
+                    logger.error(f"Failed to trigger validation: {e}")
+
+        elif phase == PipelinePhase.TECHNICAL_DESIGN:
             # Auto-generate tech pack if concept exists but tech pack doesn't
             if pipeline.concept_id and not pipeline.tech_pack_id:
                 try:
