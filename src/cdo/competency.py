@@ -234,23 +234,24 @@ def estimate_pricing(category: str, quality_tier: str = "mid") -> dict:
 LABOR_RATE_PER_HOUR = 26.00  # $17/hr base × 1.5 = $26/hr fully loaded (taxes, unemployment, benefits, PTO)
 
 # Estimated sewing time per category (minutes)
+# Adjusted +20% from base estimates per Rob's feedback on actual floor times
 SEWING_TIME_MINUTES = {
-    "jeans": 45,
-    "denim_pants": 50,
-    "chinos": 35,
-    "work_pants": 40,
-    "shorts": 25,
-    "denim_jackets": 55,
-    "chore_coats": 50,
-    "work_shirts": 40,
-    "button_down_shirts": 38,
-    "western_shirts": 42,
-    "shirts": 40,
-    "t_shirts": 15,
-    "henleys": 18,
-    "flannels": 40,
-    "overalls": 65,
-    "coveralls": 70,
+    "jeans": 54,
+    "denim_pants": 60,
+    "chinos": 42,
+    "work_pants": 48,
+    "shorts": 30,
+    "denim_jackets": 66,
+    "chore_coats": 60,
+    "work_shirts": 48,
+    "button_down_shirts": 46,
+    "western_shirts": 50,
+    "shirts": 48,
+    "t_shirts": 18,
+    "henleys": 22,
+    "flannels": 48,
+    "overalls": 78,
+    "coveralls": 84,
 }
 
 
@@ -315,14 +316,16 @@ def _estimate_material_cost(category: str) -> float:
         return total
     except (ImportError, Exception):
         # Fallback estimates if BOM_TEMPLATES not accessible
+        # Based on actual Dearborn costs: denim $5/yd, imported flannel $8/yd
         FALLBACK_MATERIAL_COSTS = {
-            "jeans": 18.50,
-            "denim_pants": 20.00,
-            "chinos": 14.00,
-            "shorts": 10.00,
-            "denim_jackets": 28.00,
-            "shirts": 14.00,
-            "t_shirts": 6.00,
-            "overalls": 30.00,
+            "jeans": 12.50,
+            "denim_pants": 12.50,
+            "chinos": 10.00,
+            "shorts": 7.50,
+            "denim_jackets": 21.00,
+            "shirts": 11.00,
+            "flannels": 14.00,
+            "t_shirts": 5.50,
+            "overalls": 19.00,
         }
-        return FALLBACK_MATERIAL_COSTS.get(category, 15.00)
+        return FALLBACK_MATERIAL_COSTS.get(category, 12.00)
