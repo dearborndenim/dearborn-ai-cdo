@@ -376,7 +376,7 @@ class PipelineEngine:
                 tech_pack_data = {
                     "id": tech_pack.id,
                     "tech_pack_number": tech_pack.tech_pack_number,
-                    "title": tech_pack.title,
+                    "title": tech_pack.style_name,
                     "category": tech_pack.category,
                     "status": tech_pack.status,
                 }

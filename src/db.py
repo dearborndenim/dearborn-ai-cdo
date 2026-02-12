@@ -1036,9 +1036,9 @@ class ShopifyAuth(Base):
 def init_db():
     """Create all tables, ensuring schema matches models.
 
-    Uses create_all for new tables, then applies column migrations
-    for any columns added after initial table creation. All ALTER
-    statements use IF NOT EXISTS so this is safe to run every startup.
+    Detects stale schema by checking for known columns. When stale,
+    drops the entire schema with CASCADE and recreates from scratch.
+    Safe during development (no production data).
     """
     import logging
     from sqlalchemy import text, inspect
@@ -1050,13 +1050,12 @@ def init_db():
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {CDO_SCHEMA}"))
         conn.commit()
 
-    # Check if we need a full rebuild (no data, stale schema)
+    # Check if we need a full rebuild (stale schema)
     inspector = inspect(engine)
     existing_tables = inspector.get_table_names(schema=CDO_SCHEMA)
 
     needs_rebuild = False
     if existing_tables:
-        # Check for known new tables/columns as staleness indicator
         if 'season_product_ideas' in existing_tables:
             try:
                 cols = {c['name'] for c in inspector.get_columns('season_product_ideas', schema=CDO_SCHEMA)}
@@ -1064,19 +1063,15 @@ def init_db():
                     needs_rebuild = True
             except Exception:
                 needs_rebuild = True
-        if 'product_pipeline' in existing_tables:
-            try:
-                cols = {c['name'] for c in inspector.get_columns('product_pipeline', schema=CDO_SCHEMA)}
-                if 'phase_notes' not in cols:
-                    needs_rebuild = True
-            except Exception:
-                needs_rebuild = True
 
     if needs_rebuild:
-        logger.info("Schema is stale — dropping and recreating all CDO tables")
-        Base.metadata.drop_all(bind=engine)
+        logger.info("Schema is stale — dropping and recreating entire CDO schema")
+        with engine.connect() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {CDO_SCHEMA} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {CDO_SCHEMA}"))
+            conn.commit()
 
-    # Create tables (creates new tables, no-op for existing ones)
+    # Create tables (creates all tables fresh after drop, or no-op for existing)
     Base.metadata.create_all(bind=engine)
     logger.info(f"Database schema ready ({len(Base.metadata.tables)} tables in {CDO_SCHEMA})")
 
