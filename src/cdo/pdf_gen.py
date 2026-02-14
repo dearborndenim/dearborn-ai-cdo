@@ -211,4 +211,4 @@ def generate_tech_pack_pdf(db: Session, tech_pack_id: int) -> Optional[bytes]:
         pdf.ln()
 
     # Output to bytes
-    return pdf.output()
+    return bytes(pdf.output())
