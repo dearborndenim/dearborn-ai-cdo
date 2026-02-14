@@ -976,6 +976,37 @@ class SeasonProductIdea(Base):
     __table_args__ = ({'schema': CDO_SCHEMA},)
 
 
+# ============== Mood Board Models ==============
+
+class MoodBoard(Base):
+    """Mood board for a product idea - reference images, design sketches, specs."""
+    __tablename__ = "mood_boards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    idea_id = Column(Integer, ForeignKey(f'{CDO_SCHEMA}.season_product_ideas.id'), nullable=False, unique=True)
+
+    status = Column(String(20), default="pending")  # pending, generating, complete, failed
+
+    # Reference images from web search (product pages, fabric swatches, hardware, etc.)
+    # [{url, source_url, title, caption, search_query, category}]
+    reference_images = Column(JSON)
+
+    # Design variation sketches from GPT Image 1.5
+    # [{image_data (base64), prompt, variation_name, description}]
+    design_sketches = Column(JSON)
+
+    # Written design specifications from GPT-4o
+    # {construction_decisions, fabric_rationale, hardware_specs, fit_notes, design_variations}
+    design_specs = Column(JSON)
+
+    error = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = ({'schema': CDO_SCHEMA},)
+
+
 # ============== Alerts & Events ==============
 
 class CDOAlert(Base):

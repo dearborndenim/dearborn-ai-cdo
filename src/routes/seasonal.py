@@ -1,4 +1,5 @@
 """Seasonal design workflow endpoints."""
+import base64
 from datetime import datetime
 from typing import Optional
 
@@ -6,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db import get_db, Season, SeasonProductIdea, SeasonLook, SeasonResearch, SeasonStatus
+from ..db import get_db, Season, SeasonProductIdea, SeasonLook, SeasonResearch, SeasonStatus, MoodBoard
 from ..cdo.seasonal import SeasonalDesigner
+from ..cdo.mood_board import MoodBoardGenerator
 
 router = APIRouter()
 
@@ -331,6 +333,92 @@ async def reject_idea(
     idea.status = "rejected"
     db.commit()
     return {"success": True, "message": f"Idea '{idea.title}' rejected"}
+
+
+@router.post("/cdo/seasons/{season_id}/ideas/{idea_id}/mood-board", tags=["Mood Boards"])
+async def generate_mood_board(
+    season_id: int,
+    idea_id: int,
+    db: Session = Depends(get_db),
+):
+    """Generate a mood board for a product idea.
+
+    Creates reference images (via web search), design variation sketches
+    (via GPT Image 1.5), and written design specifications (via GPT-4o).
+    """
+    idea = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.id == idea_id,
+        SeasonProductIdea.season_id == season_id,
+    ).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found in this season")
+
+    generator = MoodBoardGenerator(db)
+    result = generator.generate_mood_board(idea_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    if "error" in result and result.get("status") != "complete":
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.get("/cdo/seasons/{season_id}/ideas/{idea_id}/mood-board", tags=["Mood Boards"])
+async def get_mood_board(
+    season_id: int,
+    idea_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get an existing mood board for a product idea."""
+    idea = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.id == idea_id,
+        SeasonProductIdea.season_id == season_id,
+    ).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found in this season")
+
+    generator = MoodBoardGenerator(db)
+    result = generator.get_mood_board(idea_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Idea not found")
+    return result
+
+
+@router.get("/cdo/seasons/{season_id}/ideas/{idea_id}/mood-board/sketch/{variation_name}", tags=["Mood Boards"])
+async def get_mood_board_sketch(
+    season_id: int,
+    idea_id: int,
+    variation_name: str,
+    db: Session = Depends(get_db),
+):
+    """Get a specific design sketch image from a mood board.
+
+    Returns the raw PNG image for a specific variation.
+    """
+    from fastapi.responses import Response
+
+    idea = db.query(SeasonProductIdea).filter(
+        SeasonProductIdea.id == idea_id,
+        SeasonProductIdea.season_id == season_id,
+    ).first()
+    if not idea:
+        raise HTTPException(status_code=404, detail="Idea not found in this season")
+
+    mood_board = db.query(MoodBoard).filter(MoodBoard.idea_id == idea_id).first()
+    if not mood_board or not mood_board.design_sketches:
+        raise HTTPException(status_code=404, detail="Mood board not found")
+
+    for sketch in mood_board.design_sketches:
+        if sketch.get("variation_name", "").lower() == variation_name.lower():
+            if sketch.get("image_data"):
+                image_bytes = base64.b64decode(sketch["image_data"])
+                return Response(
+                    content=image_bytes,
+                    media_type="image/png",
+                    headers={"Content-Disposition": f'inline; filename="{variation_name}.png"'},
+                )
+            raise HTTPException(status_code=404, detail=f"Sketch '{variation_name}' has no image data")
+
+    raise HTTPException(status_code=404, detail=f"Variation '{variation_name}' not found")
 
 
 def _serialize_idea(i: SeasonProductIdea) -> dict:
