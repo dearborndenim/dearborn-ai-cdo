@@ -150,6 +150,8 @@ async def list_all_ideas(
             "title": i.title,
             "description": i.description,
             "category": i.category,
+            "subcategory": None,
+            "style": None,
             "status": i.status.value if i.status else "concept",
             "priority_score": i.priority_score,
             "estimated_cost": i.estimated_cost,
@@ -159,12 +161,28 @@ async def list_all_ideas(
             "labor_cost": None,
             "material_cost": None,
             "sewing_time_minutes": None,
+            "customer_fit": None,
+            "ai_rationale": None,
+            "fabric_recommendation": None,
+            "fabric_weight": None,
+            "fabric_weave": None,
+            "fabric_composition": None,
+            "fabric_type": None,
+            "colorway": None,
+            "sourced_externally": None,
+            "trend_citations": None,
+            "suggested_vendors": None,
+            "suggested_retail": i.estimated_retail,
+            "priority": None,
+            "look_id": None,
+            "promoted_concept_id": None,
             "season_name": None,
             "season_id": None,
             "created_at": i.created_at.isoformat() if i.created_at else None,
         })
 
     # Query SeasonProductIdea table
+    from .seasonal import _serialize_idea
     spi_query = db.query(SeasonProductIdea).join(Season, SeasonProductIdea.season_id == Season.id)
     if status:
         spi_query = spi_query.filter(SeasonProductIdea.status == status)
@@ -172,25 +190,13 @@ async def list_all_ideas(
         spi_query = spi_query.filter(SeasonProductIdea.category == category)
     for i in spi_query.order_by(SeasonProductIdea.id.desc()).all():
         season = db.query(Season).filter(Season.id == i.season_id).first()
-        results.append({
-            "id": i.id,
-            "source_table": "season_idea",
-            "title": i.title,
-            "description": i.description,
-            "category": i.category,
-            "status": i.status or "pending",
-            "priority_score": None,
-            "estimated_cost": i.estimated_cost,
-            "estimated_retail": i.suggested_retail,
-            "estimated_margin": i.estimated_margin,
-            "image_url": getattr(i, 'image_url', None),
-            "labor_cost": getattr(i, 'labor_cost', None),
-            "material_cost": getattr(i, 'material_cost', None),
-            "sewing_time_minutes": getattr(i, 'sewing_time_minutes', None),
-            "season_name": season.name if season else None,
-            "season_id": i.season_id,
-            "created_at": i.created_at.isoformat() if i.created_at else None,
-        })
+        row = _serialize_idea(i)
+        row["source_table"] = "season_idea"
+        row["priority_score"] = None
+        row["estimated_retail"] = i.suggested_retail
+        row["season_name"] = season.name if season else None
+        row["season_id"] = i.season_id
+        results.append(row)
 
     # Sort by created_at desc
     results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
