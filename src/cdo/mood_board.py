@@ -217,11 +217,12 @@ DEFAULT_VARIATIONS = {
 
 
 class MoodBoardGenerator:
-    """Generates mood boards using OpenAI APIs."""
+    """Generates mood boards using Perplexity (search) + OpenAI (images/specs)."""
 
     def __init__(self, db: Session):
         self.db = db
         self._openai_client = None
+        self._perplexity_client = None
 
     @property
     def openai_client(self):
@@ -229,6 +230,16 @@ class MoodBoardGenerator:
             from openai import OpenAI
             self._openai_client = OpenAI(api_key=settings.openai_api_key)
         return self._openai_client
+
+    @property
+    def perplexity_client(self):
+        if self._perplexity_client is None and settings.perplexity_api_key:
+            from openai import OpenAI
+            self._perplexity_client = OpenAI(
+                api_key=settings.perplexity_api_key,
+                base_url="https://api.perplexity.ai",
+            )
+        return self._perplexity_client
 
     def generate_mood_board(self, idea_id: int) -> Optional[Dict]:
         """Generate a full mood board for a product idea."""
@@ -285,22 +296,13 @@ class MoodBoardGenerator:
             return {"idea_id": idea_id, "error": str(e)}
 
     def _search_reference_images(self, idea: SeasonProductIdea) -> List[Dict]:
-        """Use OpenAI Responses API with web_search to find reference product images."""
+        """Find reference product images using Perplexity Sonar (web-grounded search).
+
+        Falls back to OpenAI Responses API web_search if Perplexity is not configured.
+        """
         category = idea.category or "clothing"
-        templates = VARIATION_TEMPLATES.get(category, DEFAULT_VARIATIONS)
-        search_queries = templates["search_queries"]
 
-        # Format queries with idea details
-        formatted_queries = []
-        for q in search_queries:
-            formatted = q.format(
-                title=idea.title or "",
-                category=category,
-            )
-            formatted_queries.append(formatted)
-
-        # Use Responses API with web_search tool to find reference images
-        prompt = f"""You are researching reference images for a product mood board.
+        prompt = f"""Find specific product pages and detail photos for a product mood board.
 
 Product: {idea.title}
 Category: {category}
@@ -308,26 +310,90 @@ Style: {idea.style or 'classic'}
 Fabric: {idea.fabric_recommendation or 'premium fabric'}
 Description: {idea.description or ''}
 
-Search the web for real product images that would serve as reference/inspiration for this product design. Find:
+Find real product pages from premium brands that serve as design references. I need:
 
-1. **Similar products** from premium brands (Taylor Stitch, Faherty, Filson, Iron Heart, 3sixteen, Rogue Territory)
-2. **Fabric closeups** showing the specific fabric type and texture
-3. **Hardware details** (rivets, buttons, zippers, snaps) relevant to this product
-4. **Construction details** (stitching, pocket styles, seam types) that are relevant
+1. **2-3 similar products** from brands like Taylor Stitch, 3sixteen, Rogue Territory, Iron Heart, Faherty, Filson, Carhartt WIP, Buck Mason — products with similar fit, fabric, or construction
+2. **1-2 fabric references** — product pages or supplier pages showing the specific fabric type ({idea.fabric_recommendation or category + ' fabric'}) up close
+3. **1-2 hardware/construction details** — pages showing relevant hardware (rivets, buttons, zippers) or construction techniques (stitching, pocket styles, seam types)
 
-For each image you find, provide:
-- The page URL where you found it
-- A descriptive title
-- What design element it represents (product_reference, fabric_swatch, hardware_detail, construction_detail)
-- A brief caption explaining why it's relevant
+For each reference, provide:
+- The exact product page URL
+- Product/page title
+- What it shows: product_reference, fabric_swatch, hardware_detail, or construction_detail
+- Why it's relevant to this design (one sentence)
 
-Return your findings as a JSON array:
+Return as a JSON array:
 [
-  {{"url": "page_url", "title": "...", "category": "product_reference|fabric_swatch|hardware_detail|construction_detail", "caption": "..."}}
+  {{"url": "https://...", "title": "...", "category": "product_reference", "caption": "..."}}
 ]
 
-Find at least 5-8 reference images. Return ONLY the JSON array."""
+Return ONLY the JSON array, no other text."""
 
+        # Try Perplexity first (best for web-grounded search with citations)
+        if self.perplexity_client:
+            result = self._search_with_perplexity(prompt)
+            if result:
+                return result
+
+        # Fall back to OpenAI web_search
+        if self.openai_client:
+            result = self._search_with_openai(prompt)
+            if result:
+                return result
+
+        logger.warning("No search provider available for reference images")
+        return []
+
+    def _search_with_perplexity(self, prompt: str) -> Optional[List[Dict]]:
+        """Search using Perplexity Sonar — returns citations with URLs."""
+        try:
+            response = self.perplexity_client.chat.completions.create(
+                model="sonar",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000,
+            )
+            content = response.choices[0].message.content
+
+            # Extract citations from Perplexity response
+            citations = []
+            if hasattr(response, 'citations') and response.citations:
+                citations = [{"url": c, "title": c} for c in response.citations]
+
+            # Parse the JSON response
+            images = self._parse_reference_json(content)
+
+            if images:
+                # Merge in Perplexity citations that aren't already listed
+                existing_urls = {img.get("url", "") for img in images}
+                for citation in citations:
+                    if citation["url"] not in existing_urls:
+                        images.append({
+                            "url": citation["url"],
+                            "title": citation["title"],
+                            "category": "product_reference",
+                            "caption": f"Reference: {citation['title']}",
+                            "source": "perplexity_citation",
+                        })
+                return images[:12]
+
+            # If JSON parsing failed, return just citations
+            if citations:
+                return [{
+                    "url": c["url"],
+                    "title": c["title"],
+                    "category": "product_reference",
+                    "caption": f"Reference: {c['title']}",
+                    "source": "perplexity_citation",
+                } for c in citations[:8]]
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Perplexity search failed: {e}")
+            return None
+
+    def _search_with_openai(self, prompt: str) -> Optional[List[Dict]]:
+        """Search using OpenAI Responses API with web_search tool."""
         try:
             response = self.openai_client.responses.create(
                 model="gpt-4o",
@@ -335,20 +401,14 @@ Find at least 5-8 reference images. Return ONLY the JSON array."""
                 input=prompt,
             )
 
-            # Extract the text content from the response
+            # Extract text content from response
             result_text = ""
+            citations = []
             for item in response.output:
                 if hasattr(item, 'content'):
                     for content_block in item.content:
                         if hasattr(content_block, 'text'):
                             result_text = content_block.text
-                            break
-
-            # Also collect URL citations from annotations
-            citations = []
-            for item in response.output:
-                if hasattr(item, 'content'):
-                    for content_block in item.content:
                         if hasattr(content_block, 'annotations'):
                             for ann in content_block.annotations:
                                 if hasattr(ann, 'url'):
@@ -357,41 +417,50 @@ Find at least 5-8 reference images. Return ONLY the JSON array."""
                                         "title": getattr(ann, 'title', ''),
                                     })
 
-            # Parse the JSON response
-            try:
-                if "```json" in result_text:
-                    result_text = result_text.split("```json")[1].split("```")[0]
-                elif "```" in result_text:
-                    result_text = result_text.split("```")[1].split("```")[0]
+            images = self._parse_reference_json(result_text)
 
-                images = json.loads(result_text.strip())
-                if isinstance(images, list):
-                    # Add citation URLs that aren't already in the list
-                    existing_urls = {img.get("url", "") for img in images}
-                    for citation in citations:
-                        if citation["url"] not in existing_urls:
-                            images.append({
-                                "url": citation["url"],
-                                "title": citation["title"],
-                                "category": "product_reference",
-                                "caption": f"Reference: {citation['title']}",
-                            })
-                    return images[:12]  # Cap at 12 references
-            except json.JSONDecodeError:
-                pass
+            if images:
+                existing_urls = {img.get("url", "") for img in images}
+                for citation in citations:
+                    if citation["url"] not in existing_urls:
+                        images.append({
+                            "url": citation["url"],
+                            "title": citation["title"],
+                            "category": "product_reference",
+                            "caption": f"Reference: {citation['title']}",
+                            "source": "openai_citation",
+                        })
+                return images[:12]
 
-            # Fallback: return just the citations if JSON parsing failed
-            return [{
-                "url": c["url"],
-                "title": c["title"],
-                "category": "product_reference",
-                "caption": f"Reference: {c['title']}",
-            } for c in citations[:8]]
+            if citations:
+                return [{
+                    "url": c["url"],
+                    "title": c["title"],
+                    "category": "product_reference",
+                    "caption": f"Reference: {c['title']}",
+                    "source": "openai_citation",
+                } for c in citations[:8]]
+
+            return None
 
         except Exception as e:
-            logger.error(f"Web search for references failed: {e}")
-            # Return empty list - mood board still works without references
-            return []
+            logger.warning(f"OpenAI web search failed: {e}")
+            return None
+
+    def _parse_reference_json(self, text: str) -> Optional[List[Dict]]:
+        """Parse JSON array of reference images from AI response text."""
+        try:
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+
+            result = json.loads(text.strip())
+            if isinstance(result, list):
+                return result
+        except (json.JSONDecodeError, IndexError):
+            pass
+        return None
 
     def _generate_design_sketches(self, idea: SeasonProductIdea) -> List[Dict]:
         """Generate design variation sketches using GPT Image 1.5."""
