@@ -411,7 +411,7 @@ Find at least 5-8 reference images. Return ONLY the JSON array."""
                 f"thin black lines on white background, "
                 f"fashion technical flat illustration style, "
                 f"no shading, no color fill, no models, no mannequins. "
-                f"Include small callout labels pointing to key construction details."
+                f"Do NOT include any text, labels, or words in the image."
             )
 
             try:
