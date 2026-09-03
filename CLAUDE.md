@@ -7,7 +7,7 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 - **Framework:** FastAPI (Python)
 - **Database:** PostgreSQL (schema: `cdo`)
 - **Event Bus:** Redis pub/sub (sync, threading-based)
-- **AI:** Perplexity Sonar for web-grounded trend research, OpenAI GPT-4o for structured ideation, DALL-E 3 for concepts
+- **AI:** Perplexity Sonar for web-grounded trend research, OpenAI (`OPENAI_MODEL`) for structured ideation, DALL-E (`DALL_E_MODEL`) for concepts
 - **Port:** 8004 (configurable via `PORT`)
 - **Deploy:** Railway
 
@@ -112,6 +112,8 @@ Product development: tech packs, patterns, trends, product ideas, seasonal colle
 | `ALLOWED_ORIGINS` | No | `""` | CORS origins |
 | `PERPLEXITY_API_KEY` | No | `""` | Perplexity Sonar for trend research |
 | `OPENAI_API_KEY` | Yes | | OpenAI for AI features |
+| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model for ideation |
+| `DALL_E_MODEL` | No | `dall-e-3` | Image model for concept sketches |
 | `SHOPIFY_STORE` | No | `dearborndenim.myshopify.com` | Shopify store |
 | `SHOPIFY_ACCESS_TOKEN` | No | | Shopify API token |
 | `CEO_API_URL` | No | `""` | CEO HTTP fallback |
